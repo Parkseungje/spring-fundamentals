@@ -5,6 +5,12 @@
 > 📌 전체 커리큘럼 원본: [`../master_curriculum.md`](../master_curriculum.md) (`C:\develop\study\master_curriculum.md`)
 > — `java-fundamentals`와 공유하는 참고 문서이므로 이 프로젝트 내부로 복사하지 않는다.
 
+## 환경
+- **Spring Boot 3.3.x / Java 21** (`build.gradle` 참고) — 정상 실행 확인됨
+  - 커리큘럼 예제 중 일부는 **Spring(Boot)·Java 버전에 따라 동작·설정 방식이 달라질 수 있다**
+    (예: PART 12 AOP — Boot 3.x는 기본 CGLIB / PART 19 Security — 5.x→6.x `SecurityFilterChain` 설정 방식 변경 /
+    PART 3 GC 기본값은 JDK 버전마다 다름 등). 버전 의존적인 내용은 docs에 "Spring Boot 3.3.x / Java 21 기준"으로 명시할 것
+
 ## 스택
 - Spring Boot 3.3.x / Java 21 / Gradle
 - H2 (인메모리 DB), Spring Data JPA, Spring Web, Spring AOP
