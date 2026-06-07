@@ -2,6 +2,9 @@
 
 자바 → 스프링 통합 마스터 커리큘럼 중 **PART 8~21 (IoC/DI, AOP, DB 접근, JPA, MVC, 분산 시스템, Security, 테스트, DevOps)** 학습용 Spring Boot 프로젝트.
 
+> 📌 전체 커리큘럼 원본: [`../master_curriculum.md`](../master_curriculum.md) (`C:\develop\study\master_curriculum.md`)
+> — `java-fundamentals`와 공유하는 참고 문서이므로 이 프로젝트 내부로 복사하지 않는다.
+
 ## 스택
 - Spring Boot 3.3.x / Java 21 / Gradle
 - H2 (인메모리 DB), Spring Data JPA, Spring Web, Spring AOP
