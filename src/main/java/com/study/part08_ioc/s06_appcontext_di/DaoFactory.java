@@ -31,6 +31,13 @@ public class DaoFactory {
         return new UserDao(connectionMaker());
     }
 
+    // ★ connectionMaker는 지금 userDao()에서만 쓰이는데도 @Bean을 붙인다. 왜?
+    //   ① 싱글톤 보장(가장 중요): @Bean이면 connectionMaker()를 여러 번 호출해도 Spring이 객체를 '하나만'
+    //      만들어 반환한다(@Configuration이 프록시로 메서드 호출을 가로채 캐시함). 나중에 DAO가 늘어 여러
+    //      @Bean이 connectionMaker()를 호출해도 같은 인스턴스를 공유한다. @Bean이 없다면 호출마다 new가 실행돼
+    //      매번 새 객체가 생긴다(커넥션 풀 등을 공유 못 함).
+    //   ② 다른 빈들이 공유·재사용 가능, getBean으로 단독으로 꺼내거나 교체·테스트하기 쉬움.
+    //   ③ 모든 부품을 컨테이너가 일관되게 관리(어떤 건 빈, 어떤 건 new로 섞이면 관리가 어려움).
     @Bean
     public ConnectionMaker connectionMaker() {
         return new NConnectionMaker();
