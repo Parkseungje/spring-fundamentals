@@ -28,6 +28,7 @@ Spring Data JPA는 리포지토리 인터페이스만 만들면 구현까지 자
 
 ### JPA = 자바 ORM 표준
 JPA는 **어노테이션으로 매핑을 선언**하면 SQL을 대신 생성한다.
+
 | | SQL Mapper(JdbcTemplate) | JPA |
 |---|---|---|
 | SQL | 개발자가 직접 작성 | 자동 생성 |
