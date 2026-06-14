@@ -58,6 +58,23 @@ public class UserDao {
         return user;
     }
 
+    // 아래 deleteAll/getCount는 PART 9 테스트의 '픽스처(시작 상태 보장)'와 '검증'에 쓰인다.
+    //   - deleteAll(): 각 테스트 시작 전 데이터를 비워, 테스트 간 독립성을 보장한다(@BeforeEach에서 호출).
+    //   - getCount(): 저장된 행 수를 세어 add/deleteAll 결과를 검증한다.
+    public void deleteAll() throws ClassNotFoundException, SQLException {
+        try (Connection c = connectionMaker.makeConnection()) {
+            c.prepareStatement("delete from users").executeUpdate();
+        }
+    }
+
+    public int getCount() throws ClassNotFoundException, SQLException {
+        try (Connection c = connectionMaker.makeConnection();
+             ResultSet rs = c.prepareStatement("select count(*) from users").executeQuery()) {
+            rs.next();
+            return rs.getInt(1);
+        }
+    }
+
     public void createTable() throws ClassNotFoundException, SQLException {
         try (Connection c = connectionMaker.makeConnection()) {
             c.prepareStatement("create table if not exists users(id varchar(50) primary key, name varchar(50))")
