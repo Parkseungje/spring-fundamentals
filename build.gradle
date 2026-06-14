@@ -47,9 +47,9 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
-// PART 8 단계별 데모 실행용: ./gradlew runStage -Pmain=com.study.part08_ioc.stageX_xxx.Main
+// PART 8 소단원별 데모 실행용: ./gradlew runStage -Pmain=com.study.part08_ioc.sNN_xxx.Main
 tasks.register('runStage', JavaExec) {
     group = 'study'
     classpath = sourceSets.main.runtimeClasspath
-    mainClass = project.findProperty('main') ?: 'com.study.part08_ioc.stage5_ioc_container.Main'
+    mainClass = project.findProperty('main') ?: 'com.study.part08_ioc.s01_traditional.Main'
 }
