@@ -17,6 +17,20 @@ repositories {
     mavenCentral()
 }
 
+// 한글 인코딩 깨짐 방지 (IntelliJ ▶ 실행/gradlew 모두 적용)
+//  - 소스 파일은 UTF-8로 컴파일
+//  - 실행/테스트 JVM의 출력 인코딩을 UTF-8로 강제 (Java 18+는 file.encoding은 UTF-8 기본이지만
+//    stdout/stderr.encoding은 콘솔 코드페이지(한국어 Windows=MS949)를 따라가 깨지므로 명시한다)
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+tasks.withType(JavaExec).configureEach {
+    jvmArgs += ['-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8']
+}
+tasks.withType(Test).configureEach {
+    jvmArgs += ['-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8']
+}
+
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
