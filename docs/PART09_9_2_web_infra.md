@@ -65,6 +65,46 @@
 > ★ 핵심 한 줄: **Spring Boot = "실행 가능한 JAR + 내장 WAS"**. `java -jar` 하나로 웹서버까지 같이 뜨는 게
 > 전통 방식(외부 WAS에 WAR 배포)과의 결정적 차이다.
 
+### 1-5. (실전 의문) Nginx/Apache 없이도 Spring Boot + Vue가 돌아간다 — 왜?
+"Spring Boot + Vue로 개발할 때 Nginx/Apache가 없어도 잘 됐다"는 흔한 경험이다. 정상이다. 1-1에서
+"웹서버=정적, WAS=동적"으로 나눴지만 그건 **역할 구분**이지 "WAS는 정적을 못 준다"는 뜻이 아니다.
+- **내장 Tomcat(WAS)도 정적 파일(HTML/CSS/JS)을 줄 수 있다.** Spring Boot는 `src/main/resources/static/`의
+  파일을 자동으로 정적 자원으로 서빙한다. → Vue 빌드 결과(`dist/`)를 거기 넣으면 Tomcat 하나가 화면+API를 다 처리.
+- 즉 `클라 ↔ Nginx ↔ Tomcat`(1-1)은 **권장 구성**이지 **필수**가 아니다.
+
+개발 시 보통 둘 중 하나였을 것:
+- **(A) 개발 중 — 포트 2개**: `npm run dev`로 Vite 개발서버(예: 5173)가 Vue 화면을 서빙(Nginx 역할 대신),
+  API는 Spring Boot(8080)로. (CORS 설정 또는 Vite proxy로 연결.) Nginx 불필요.
+- **(B) 빌드 후 — 포트 1개**: `npm run build`한 `dist/*`를 Spring의 `static/`에 넣으면, 내장 Tomcat 하나가
+  화면(정적) + API(동적)를 모두 처리. Nginx 불필요.
+
+**그럼 Nginx는 왜 쓰나?** 없어도 되지만, 운영(실서비스)에선 앞단에 두는 게 보통이다 — 정적 가속, 리버스
+프록시, 로드 밸런싱(Tomcat 여러 대 분산, 8.2 확장성), HTTPS(SSL) 종료, 캐싱·압축·보안. **즉 필수가 아니라
+"트래픽이 커지면 붙이는 운영 최적화"**다.
+
+### 1-6. (비교) 그럼 PHP는 Nginx/Apache가 필수인가?
+"Spring은 Nginx 없이 되던데 PHP는?"이라는 질문의 답: **PHP도 절대 필수는 아니지만, 자바보다 의존도가 훨씬
+높다.** 원인은 실행 모델 차이다.
+- **Spring Boot**: 내장 WAS(Tomcat)가 있어 **앱이 곧 웹서버**다. `java -jar`만으로 스스로 HTTP를 받는다(8080).
+- **PHP**: 전통적으로 **스스로 HTTP를 받는 상주 서버가 아니다.** "요청이 오면 스크립트를 실행해 결과를 내는
+  처리기"라, 누군가 HTTP를 받아 PHP에 넘겨줘야 한다. 그 역할이 Nginx/Apache다.
+  ```
+  [브라우저] → [Nginx/Apache] → [PHP-FPM] → .php 실행
+                (HTTP 수신)      (스크립트 실행기)
+  ```
+- PHP에도 개발용 내장 서버(`php -S localhost:8000`)가 있어 Nginx 없이 돌릴 수는 있지만, 공식적으로
+  **개발·테스트 전용**(운영 부적합)이다. 그래서 **운영 PHP는 사실상 Nginx/Apache + PHP-FPM 조합이 표준.**
+
+| | Spring Boot | PHP |
+|---|---|---|
+| HTTP를 직접 받나 | ✅ 내장 Tomcat (앱=서버) | ❌ 웹서버가 받아 넘겨줌 |
+| 단독 실행 | `java -jar`로 충분 | `php -S`는 개발용만 |
+| 운영 시 웹서버 | 선택(성능·확장 위해 권장) | 사실상 필수(Nginx/Apache + PHP-FPM) |
+
+> 정리: 둘 다 '물리적 필수'는 아니지만, **내장 WAS가 있는 Spring은 Nginx가 선택, 내장 서버가 없는 PHP는
+> 사실상 필수**다. (참고: Spring을 옛 방식 WAR로 외부 Tomcat에 올리면 자바도 'PHP스러운' 외부 서버 의존
+> 모델이 된다 — Spring Boot의 JAR+내장 WAS가 그걸 벗어난 것.)
+
 ---
 
 ## 2. 실습으로 확인하기 — "JAR에 WAS가 내장된다"
@@ -109,3 +149,11 @@ BOOT-INF/lib/tomcat-embed-websocket-10.1.30.jar
 - **Q. Spring Boot가 JAR를 권장하는 이유는?**
   - 내 답: WAS(Tomcat)를 JAR에 내장해서, 외부 WAS 설치·설정 없이 `java -jar`만으로 서버가 뜬다. 배포·실행이
     단순해 DevOps 부담이 줄고 마이크로서비스에 적합. (실습에서 JAR 안 tomcat-embed로 확인)
+
+- **Q. Spring Boot + Vue를 Nginx 없이도 돌릴 수 있는 이유는?**
+  - 내 답: 내장 Tomcat도 정적 파일을 줄 수 있어서. 개발은 Vite 개발서버(화면)+Spring(API) 따로, 빌드 후엔
+    Vue dist를 static/에 넣어 Tomcat 하나로 화면+API 처리. Nginx는 필수가 아니라 운영 최적화(가속·LB·HTTPS). (1-5)
+
+- **Q. PHP는 왜 자바보다 Nginx/Apache 의존도가 높은가?**
+  - 내 답: Spring은 내장 WAS가 있어 앱이 스스로 HTTP를 받지만, PHP는 상주 서버가 아니라 요청을 받아 넘겨줄
+    웹서버(+PHP-FPM)가 필요하기 때문. `php -S` 내장 서버는 개발 전용이라 운영엔 사실상 Nginx/Apache 필수. (1-6)
