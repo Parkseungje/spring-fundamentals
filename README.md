@@ -43,7 +43,7 @@ curl localhost:8080/actuator/mappings
 ## 진행 상황
 
 - [x] PART 8  객체 설계의 진화 → IoC/DI (8.1~8.6 완료, s01~s06 소단원별)
-- [ ] PART 9  테스트와 웹 인프라
+- [x] PART 9  테스트와 웹 인프라 (9.1 JUnit, 9.2 웹 인프라 — 소단원별)
 - [ ] PART 10 DB 접근의 진화
 - [ ] PART 11 ORM/JPA와 트랜잭션 추상화
 - [ ] PART 12 프록시의 진화와 Spring AOP
