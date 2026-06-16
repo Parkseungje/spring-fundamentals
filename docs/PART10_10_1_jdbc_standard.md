@@ -55,12 +55,24 @@ JDBC는 'API'를 표준화했지 'SQL 문법'을 표준화하진 못한다.
 
 ### 코드 (`com.study.part10_db.s01_jdbc_standard`)
 - `JdbcStandardDemo` — DB에 무관한 `runWith(url)`(표준 JDBC로 insert/select)를 URL만 다른 두 연결에 실행.
-- (둘 다 H2지만 mem DB 이름만 다르게 해 '다른 DB'를 흉내. 실무에선 MySQL/Oracle 등으로 바뀌어도 runWith는 그대로.)
+- `BeforeAfterJdbc` — JDBC '이전'(벤더별 고유 API, 메서드 이름까지 제각각) vs '이후'(표준 API) 코드 비교.
+- `DialectDifference` — JDBC가 못 없애는 'SQL 방언 차이'를 코드로 명시(LIMIT vs ROWNUM, AUTO_INCREMENT vs SEQUENCE).
 
 ### 실행
 **프로젝트 루트(`C:\develop\study\spring-fundamentals`)에서 실행**한다.
 ```bash
 ./gradlew runStage -Pmain=com.study.part10_db.s01_jdbc_standard.JdbcStandardDemo
+./gradlew runStage -Pmain=com.study.part10_db.s01_jdbc_standard.BeforeAfterJdbc
+./gradlew runStage -Pmain=com.study.part10_db.s01_jdbc_standard.DialectDifference
+```
+
+### BeforeAfterJdbc / DialectDifference 핵심 출력
+```
+[JDBC 이전] MySQL: connectMySql/runQuery   Oracle: openOracle/fetchRows  <- API 이름부터 달라 DB 교체=재작성
+[JDBC 이후] 둘 다 getConnection/executeQuery 로 통일 (URL/드라이버만 변경)
+
+[페이징] MySQL/H2: ... LIMIT 2     Oracle: ... where ROWNUM <= 2   <- SQL 문법 다름(JDBC가 못 없앰)
+[자동증가] MySQL: AUTO_INCREMENT    Oracle: SEQUENCE
 ```
 
 ### 실행 결과 — 가설과 실제 비교
