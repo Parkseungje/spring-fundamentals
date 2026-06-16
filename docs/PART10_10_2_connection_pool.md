@@ -161,6 +161,108 @@ try (Connection c = pool.getConnection()) { ... }   // 빌림 -> try 종료 시 
 스레드 풀 200 + 커넥션 풀 10이면, 동시 요청 200개여도 DB 작업은 한 번에 10개 → 나머지는 커넥션 대기(병목).
 "스레드 많다고 처리량이 비례해 늘지 않는다"(PART 7.1). 비유: 종업원(스레드) 풀 + 주방 출입증(커넥션) 풀.
 
+### 1-9. HikariCP란 — '커넥션 풀'이라는 개념의 실제 구현체
+지금까지 말한 '커넥션 풀'은 **개념**이고, **HikariCP는 그 개념을 실제 코드로 만든 라이브러리(제품 이름)** 다.
+- **개념(커넥션 풀)**: 연결을 미리 만들어 빌리고·반납·재사용하는 것(1-1~1-4).
+- **구현(제품)**: 그 개념을 실제로 만든 라이브러리들 → **HikariCP**, DBCP2, Tomcat JDBC Pool, c3p0 등.
+- HikariCP가 그중 가장 빠르고 가벼워서 사실상 표준 → **Spring Boot 2.0부터 기본 커넥션 풀**(starter에 자동 포함).
+
+이름의 유래: **Hikari(光)는 일본어로 "빛"**, CP = Connection Pool. "빛처럼 빠른 커넥션 풀"이라는 뜻이다.
+실제로 바이트코드 최적화·락 최소화로 빌림/반납이 매우 빠르고, 코드가 작아 버그가 적다.
+
+PART 8/10의 사상으로 보면 HikariCP는 **`DataSource`(인터페이스, 10.3)의 구현체 `HikariDataSource`** 다.
+우리가 코드에서 `DataSource`에만 의존하면(10.3 DIP), 실제로 주입되는 구현이 HikariCP인 것이다.
+```java
+HikariConfig cfg = new HikariConfig();
+cfg.setJdbcUrl(url); cfg.setMaximumPoolSize(10);   // 풀 크기 10
+HikariDataSource pool = new HikariDataSource(cfg); // ← 이게 HikariCP 풀(= DataSource 구현)
+try (Connection c = pool.getConnection()) { ... }  // 빌림/반납
+```
+> ★ 당신 프로젝트에서도 이미 동작 중이다. 11.3~11.5 JPA 테스트 로그에 떴던 `HikariPool-1 - Starting...`,
+> `HikariPool-1 - Added connection ...`가 바로 그것 — JPA(Hibernate)도 내부적으로 HikariCP 풀을 통해
+> DB에 연결한다. Spring Boot에선 보통 `HikariDataSource`를 직접 만들지 않고 `application.yml`만 설정하면
+> Spring이 자동으로 HikariCP를 구성해 준다.
+
+Spring Boot 실무 설정(참고):
+```yaml
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 10      # 풀 크기
+      connection-timeout: 30000  # 커넥션 못 빌리면 30초 후 타임아웃(풀 고갈 — 1-4)
+      max-lifetime: 1800000      # 커넥션 최대 수명(오래된 건 교체)
+```
+비유: '커넥션 풀'이 자동차(개념)라면 HikariCP는 특정 모델(예: 테슬라). DBCP2·c3p0는 다른 모델이고,
+Spring Boot는 그중 성능 좋은 HikariCP를 기본 출고 모델로 깔아 준다.
+
+### 1-10. max_connections는 조정 가능 / 풀과의 차이 / 초과 시 무슨 일이
+1-5에서 "풀 크기 ≠ max_connections"라고 했는데, 셋을 분명히 정리한다.
+
+#### (1) max_connections는 고정값이 아니라 수정 가능한 DB 설정값
+MySQL 기준:
+```sql
+SET GLOBAL max_connections = 500;   -- (임시) 즉시 적용, 단 DB 재시작하면 원래대로
+```
+```ini
+# my.cnf / my.ini  (영구) — 재시작 후에도 유지
+[mysqld]
+max_connections = 500
+```
+(PostgreSQL은 `postgresql.conf` 수정 후 재시작, 클라우드 RDS는 파라미터 그룹에서 변경 — 방법은 달라도 다 조정 가능.)
+
+★ 하지만 "늘릴 수 있다 ≠ 늘리는 게 답이다". 무작정 키우면 안 되는 이유:
+- **연결마다 RAM을 먹는다**(1-1 ③): max_connections를 1만으로 키우고 실제로 그만큼 차면 MySQL이 메모리 부족(OOM)으로 죽는다.
+- **CPU·디스크는 그대로**(PART 7.1과 같은 함정): 연결만 많아도 DB가 동시에 진짜 처리하는 일은 코어 수·I/O에 묶여 있어, 컨텍스트 스위칭·락 경합만 늘어 오히려 느려진다.
+- 그래서 실무 정석은 "연결을 무한정 받기"가 아니라 **풀로 적정 수 제한 + 재사용**(1-3). max_connections는 "그 풀들의 합 + 여유"만큼만 잡는다.
+- 늘리는 정당한 경우: **WAS 대수가 늘어** 필요 연결이 기본값(151)을 초과할 때. (단 DB RAM이 그 세션들을 감당하는지 확인.)
+
+#### (2) max_connections ≠ 커넥션 풀 — 위치·주체·목적이 다름
+둘 다 '연결 개수'라 헷갈리지만 완전히 다른 것이다.
+
+| | 커넥션 풀 (Connection Pool) | max_connections |
+|---|---|---|
+| 어디에 있나 | WAS(내 애플리케이션) 안 | DB 서버(MySQL) 안 |
+| 누가 정하나 | 내가 (HikariCP 설정) | DBA/DB 설정 |
+| 무엇인가 | 연결을 미리 만들어 빌리고·반납·재사용하는 보관함 | DB가 동시에 받아줄 수 있는 연결의 최대 개수(상한선) |
+| 목적 | 성능(연결 재사용으로 빠르게) | 보호(DB가 감당 못 할 연결 폭주를 막음) |
+| 개수 의미 | "내 앱이 들고 있는 연결 수"(예: 10) | "DB 전체가 허용하는 연결 수"(예: 151) |
+| 넘으면? | 풀이 비면 요청이 대기(풀 고갈) | DB가 연결 거부(`Too many connections`) |
+
+관계는 하나로 요약된다: **모든 WAS의 풀 크기 합 ≤ DB의 max_connections.**
+```
+[WAS#1] 풀 30  ┐
+[WAS#2] 풀 30  ├→ DB로 가는 연결 총 90개
+[WAS#3] 풀 30  ┘
+                ↓
+[DB MySQL] max_connections = 151  → 90 ≤ 151 → OK
+```
+
+#### (3) WAS 대수 × 풀 크기 > max_connections 이면 — DB가 초과분을 거부
+예: WAS 3대 × 풀 60 = 180 필요, 그런데 max_connections = 151.
+```
+[DB] 151개까지만 받고, 152번째 연결 요청부터 거부:
+  ERROR 1040 (HY000): Too many connections
+```
+→ 이 연결을 받으려던 WAS는 커넥션을 못 만들어 에러가 난다.
+
+★ 핵심은 **"언제 터지냐"** — 풀이 연결을 언제 만드느냐에 따라 시점이 다르다:
+- **HikariCP 기본(minimumIdle = maximumPoolSize)**: 시작하자마자 풀 크기만큼 연결 시도 → 먼저 뜬 WAS들이 한도를 채우면 **늦게 뜬 WAS가 부팅 단계에서 풀 초기화 실패**.
+- **idle을 적게 잡은 경우**: 평소엔 합이 151 이하라 멀쩡하다가, **트래픽 폭주로 여러 WAS가 동시에 풀을 최대로 늘리는 순간** 초과분이 거부됨 → **하필 가장 바쁜 피크에 갑자기 장애**(가장 위험).
+
+사용자 입장 증상: 일부 요청이 DB 연결 실패로 500 에러, 또는 커넥션을 기다리다 타임아웃(`Connection is not available`).
+어떤 요청은 되고 어떤 요청은 안 되는 **간헐적/부분적 장애**라 디버깅이 까다롭다. 평소(개발·테스트)엔 멀쩡하다
+운영 피크에 터지는 시한폭탄 — PART 7.4 "어쩌다 되는 코드는 위험"과 같은 맥락이다.
+
+막는 법(둘 중 하나 또는 둘 다):
+1. max_connections를 올린다 (단 DB RAM이 그 세션들을 감당하는지 확인 — 1-1 ③).
+2. 각 WAS의 풀 크기를 줄인다 (합이 한도 안에 들어오게).
+3. 공식: **(WAS 대수 × 풀 크기) + 관리·모니터링용 연결 + 여유 ≤ max_connections.**
+```
+WAS 3대 × 풀 40 = 120, + 여유 20 = 140 ≤ max_connections 151  → 안전
+```
+비유(콜센터): 회선 151개인데 거래처들이 직통선을 총 180개 깔려고 하면 152번째부터 "회선이 다 찼습니다"로
+거부. 평소 통화량 적을 땐 모르다, 다들 동시에 전화하는 피크 때 일부 거래처가 아예 연결 불가가 된다.
+
 ---
 
 ## 2. 실습으로 확인하기
@@ -226,3 +328,23 @@ try (Connection c = pool.getConnection()) { ... }   // 빌림 -> try 종료 시 
 - **Q. 커넥션은 '웹서버(Nginx) ↔ DB' 연결인가?**
   - 내 답: 아니다. 'WAS(내 Spring Boot 앱) ↔ DB 서버' 연결이다. 웹서버(Nginx)는 정적 파일 담당이라 DB에
     직접 연결하지 않는다. 커넥션 풀도 WAS 안에 있고, WAS가 시작 시 DB로 미리 N번 연결해 둔다.
+
+- **Q. HikariCP는 무엇인가?**
+  - 내 답: '커넥션 풀'이라는 개념을 실제로 구현한 라이브러리(제품)다. Hikari(光=빛)처럼 빠른 Connection
+    Pool(CP)이라는 뜻. 빠르고 가벼워 Spring Boot의 기본 커넥션 풀이며, `DataSource`(10.3)의 구현체
+    `HikariDataSource`다. JPA 테스트 로그의 `HikariPool-1`이 바로 이것.
+
+- **Q. max_connections는 못 바꾸는 고정값인가? 무작정 늘리면 되나?**
+  - 내 답: 바꿀 수 있다(`SET GLOBAL` 임시, my.cnf 영구). 하지만 무작정 늘리면 안 된다 — 연결마다 RAM을
+    먹어 메모리 부족 위험, CPU·디스크 한계로 연결만 많아도 오히려 느려진다(PART 7.1). 정석은 풀로 적정 수
+    제한 + 재사용. WAS 대수가 늘어 기본값을 넘을 때만 (DB RAM 확인하며) 상향한다.
+
+- **Q. max_connections와 커넥션 풀은 같은 건가?**
+  - 내 답: 다르다. 커넥션 풀은 WAS(내 앱) 쪽·성능용·"내가 들고 쓰는 보관함"이고, max_connections는 DB 쪽·
+    보호용·"DB가 받아주는 상한선"이다. 관계는 '모든 WAS의 풀 크기 합 ≤ DB의 max_connections'.
+
+- **Q. WAS 대수 × 풀 크기 > max_connections 면 무슨 일이 벌어지나?**
+  - 내 답: DB가 한도 초과분 연결을 거부한다(`Too many connections`) → 그 연결을 못 받은 WAS는 부팅 실패
+    또는 런타임 에러(요청 500/타임아웃). 터지는 시점은 '모든 WAS가 풀을 가득 채우는 순간'이라 평소엔
+    멀쩡하다 피크 트래픽에 갑자기 장애가 난다(가장 위험). 막으려면 max_connections 상향(DB RAM 확인) 또는
+    풀 축소로 '(WAS 대수 × 풀 크기) + 여유 ≤ max_connections'를 맞춘다.
