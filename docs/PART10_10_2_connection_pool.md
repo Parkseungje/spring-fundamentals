@@ -237,7 +237,7 @@ spring:
 > [WAS 풀] ── 살아있다고 믿는 선 ──→ [DB]
 >            그런데 몰래 끊기는 경우:
 >            - DB가 idle 오래된 연결을 강제 종료 (MySQL wait_timeout)
->            - 방화벽/로드밸런서가 오래된 TCP 연결을 idle timeout으로 끊음
+>            - 방화벽/로드밸런서가 오래된 TCP 연결을 idle timeout으로 끊음 (방화벽 개념은 9.2 1-7 참고)
 >            - 네트워크 장비가 유휴 연결 정리
 > ```
 > 끊긴 줄 모르고 빌려 쿼리를 날리면 그제야 에러(`Connection reset`/`Broken pipe`)가 난다 → 멀쩡하던
