@@ -81,7 +81,46 @@ public class Pointcuts {
 > 스프링이 애스펙트를 프록시하려다 **순환참조 오류**가 난다. 그래서 대상을 `OrderService+`처럼 좁혀야 한다
 > (실측에서 이 오류를 만나 범위를 좁혀 해결). 포인트컷은 "필요한 곳만" 좁게 거는 게 안전·성능 모두에 좋다.
 
-### 1-5. 다음(12.11)
+### 1-5. 포인트컷 표현식 문법 — execution과 다른 지정자들
+12.7~여기까지 `execution(* order(..))`를 계속 썼는데, 그 문법을 이제 정리한다.
+
+#### execution 구조
+```
+execution( [접근제어자] 반환타입 [패키지.클래스.]메서드명(파라미터) )
+           예: public     *        com.study..*Service.  find*    (..)
+```
+| 자리 | 의미 | 예 |
+|---|---|---|
+| 접근제어자 | 생략 가능(보통 생략) | `public` |
+| 반환타입 | `*`=아무 타입 | `*`, `String`, `void` |
+| 패키지.클래스 | 생략 시 어디든. `..`=하위 패키지 전체, `*`=한 단계 | `com.study..*Service` |
+| 메서드명 | `*`=아무 이름, `find*`=find로 시작 | `order`, `find*`, `*` |
+| 파라미터 | `()`=무인자, `(..)`=0개 이상, `(String,..)`=String으로 시작 | `(..)`, `(Long)` |
+
+- 예: `execution(* com.study..*Service.find*(..))` = "com.study 하위 어디든, 이름이 ...Service인 클래스의
+  find로 시작하는 메서드, 인자 무관, 반환타입 무관".
+
+#### execution 외의 주요 지정자
+포인트컷은 execution만 있는 게 아니다.
+| 지정자 | 의미 |
+|---|---|
+| `execution(...)` | 메서드 시그니처 패턴(가장 많이 씀) |
+| `within(타입/패키지)` | 특정 클래스/패키지 '안'의 모든 메서드 (예: `within(com.study..*)`) |
+| `@annotation(어노테이션)` | 그 '어노테이션이 붙은 메서드'에만 (커스텀 어노테이션 AOP) |
+| `bean(빈이름)` | 특정 스프링 빈 (예: `bean(*Service)`) |
+| `args(타입...)` | 특정 인자 타입을 받는 메서드 |
+
+- ★ **`@annotation`** 이 특히 강력하다. `execution`은 '이름 패턴'으로 고르지만, `@annotation`은 **개발자가 콕
+  집어 표시한 메서드**에만 적용한다. 예: 커스텀 `@LogExecutionTime`을 만들고 `@annotation(...LogExecutionTime)`으로
+  잡으면 그 어노테이션이 붙은 메서드만 측정된다(실측 예제4). 스프링의 `@Transactional`·`@Cacheable`도 결국
+  이런 '어노테이션 기반' 포인트컷으로 동작한다.
+  - 주의: 커스텀 어노테이션은 `@Retention(RUNTIME)`이어야 런타임에 AOP가 인식한다(SOURCE/CLASS면 못 봄).
+
+> ★ returning / throwing 바인딩 — `@AfterReturning(returning="result")`는 타겟의 '반환값'을 어드바이스
+> 파라미터(result)로 받고, `@AfterThrowing(throwing="ex")`는 던져진 '예외'를 받는다. @Before/@After 등도
+> `JoinPoint`를 첫 인자로 받으면 메서드명·인자(getArgs())를 읽을 수 있다.
+
+### 1-6. 다음(12.11)
 이 모든 Spring AOP는 '런타임 프록시' 기반이다. 그래서 내부 호출을 못 가로채는 한계가 있다(12.11, PART 13.3).
 컴파일/로딩 시점에 위빙하는 순수 AspectJ와의 차이를 12.11에서 정리한다.
 
@@ -95,6 +134,7 @@ public class Pointcuts {
 ### 코드 (`com.study.part12_aop.s10_advice_types`)
 - `OrderService`/`RealOrderService`(order 정상, fail 예외), `Pointcuts`(@Pointcut 모음).
 - `Example1_FiveAdvices`(정상 순서) / `Example2_AfterThrowing`(예외 분기) / `Example3_PointcutReuse`(분리·조합).
+- `LogExecutionTime`(커스텀 어노테이션) + `Example4_CustomAnnotationPointcut`(@annotation 포인트컷).
 
 ### 실행
 **프로젝트 루트(`C:\develop\study\spring-fundamentals`)에서 실행**한다.
@@ -102,6 +142,7 @@ public class Pointcuts {
 ./gradlew runStage -Pmain=com.study.part12_aop.s10_advice_types.Example1_FiveAdvices
 ./gradlew runStage -Pmain=com.study.part12_aop.s10_advice_types.Example2_AfterThrowing
 ./gradlew runStage -Pmain=com.study.part12_aop.s10_advice_types.Example3_PointcutReuse
+./gradlew runStage -Pmain=com.study.part12_aop.s10_advice_types.Example4_CustomAnnotationPointcut
 ```
 
 ### 실행 결과 — 가설과 실제 비교 (실측)
@@ -120,6 +161,14 @@ public class Pointcuts {
 [fail()]   (orders 불일치 + everythingButFail의 !fail 로 제외) <- 부가 기능 미적용
 ```
 - 정상/예외 분기와 포인트컷 분리·조합(&&/!)이 모두 확인됐다. ✅
+
+예제4 (@annotation 포인트컷):
+```
+[slowTask() — @LogExecutionTime 있음]  [비즈니스] slowTask 완료 -> [측정] slowTask 실행시간 = 66ms
+[fastTask() — 어노테이션 없음]          [비즈니스] fastTask 완료   (측정 없음)
+```
+- `@annotation(LogExecutionTime)` 포인트컷이라 어노테이션 붙은 slowTask에만 측정 로그가 붙는다. ✅ →
+  execution(이름 패턴) 대신 '표시한 메서드만' 고르는 커스텀 어노테이션 AOP(@Transactional도 같은 방식).
 
 ---
 
@@ -140,3 +189,12 @@ public class Pointcuts {
 - **Q. @Pointcut의 이점과 주의점은?**
   - 내 답: 표현식에 이름을 붙여 여러 어드바이스가 재사용(DRY), &&/||/!로 조합 가능. 주의: 너무 넓게 잡으면
     애스펙트 자신까지 매칭돼 순환참조가 날 수 있어 대상을 좁혀야 한다.
+
+- **Q. execution 표현식의 구조는?**
+  - 내 답: `execution([접근제어자] 반환타입 [패키지.클래스.]메서드명(파라미터))`. `*`=아무거나 하나,
+    `..`=파라미터 0개 이상 또는 하위 패키지 전체. 예: `execution(* com.study..*Service.find*(..))`.
+
+- **Q. execution 말고 어떤 포인트컷 지정자가 있나? @annotation은?**
+  - 내 답: within(클래스/패키지), @annotation(어노테이션 붙은 메서드), bean(빈 이름), args(인자 타입) 등.
+    특히 @annotation은 커스텀 어노테이션(@LogExecutionTime 등)을 만들어 '표시한 메서드만' 고르는 방식으로,
+    스프링 @Transactional/@Cacheable의 동작 방식이기도 하다. (커스텀 어노테이션은 @Retention(RUNTIME) 필수.)
