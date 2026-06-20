@@ -14,10 +14,14 @@
 - **ThreadLocal**: 같은 변수를 선언해도 '스레드마다 독립된 칸'을 주는 저장소. `set/get`은 호출한 스레드의 칸에만 작용.
 - **스레드 풀(Thread Pool)**: 스레드를 미리 만들어 빌려주고 '재사용'하는 저장소(PART 7.8). 톰캣이 요청 처리에 쓴다.
 - **traceId / 호출 깊이(depth)**: 로그 추적기가 "이 요청"을 식별하고 중첩 호출을 들여쓰기로 표현하기 위한 상태.
+- **약한 참조(WeakReference)**: GC가 회수해도 되는 참조(강한 참조는 살아 있으면 회수 못 함). ThreadLocalMap의 키가 이것.
+- **stale entry**: 키(ThreadLocal)는 GC됐는데 값은 남아 있는 '유령 엔트리'. 메모리 누수의 원인.
+- **InheritableThreadLocal**: 자식 스레드 생성 시 부모의 값을 자식 칸으로 복사해 전파하는 ThreadLocal.
 
 한 줄 그림: **상태를 가진 싱글톤을 여러 스레드가 동시에 쓰면 필드가 섞인다. ThreadLocal은 그 상태를
 '스레드마다 따로' 저장해 잠금(synchronized) 없이 섞임을 막는다. 단 스레드 풀이 스레드를 재사용하므로
-요청 끝에 반드시 remove()로 칸을 비워야 한다(안 그러면 다음 요청에 이전 데이터가 샌다).**
+요청 끝에 반드시 remove()로 칸을 비워야 한다(안 그러면 다음 요청에 이전 데이터가 새고, 메모리도 누수된다).
+또 값은 자식 스레드로 전파되지 않는다(필요하면 InheritableThreadLocal).**
 
 ---
 
@@ -87,7 +91,37 @@ try {
 > 반납된다 → 다음 요청에 누수. finally는 예외 여부와 무관하게 실행되므로 "무조건 비우기"를 보장한다.
 > (PART 10.2에서 본 "커넥션은 반드시 finally에서 반납"과 똑같은 사고방식 — 빌린 건 무조건 정리.)
 
-### 1-4. 12.1·앞으로와의 연결
+### 1-4. ★ 또 하나의 누락 위험 — 메모리 누수 (약한 참조와 stale entry)
+remove() 누락은 1-3의 '데이터 누수(보안)'만 일으키는 게 아니라 **메모리 누수**도 일으킨다. 원리를 보자.
+- `ThreadLocalMap`의 구조: **키 = ThreadLocal 객체에 대한 '약한 참조(WeakReference)'**, **값 = '강한 참조'**.
+  (약한 참조 = GC가 회수해도 되는 참조. 강한 참조 = 살아 있으면 GC가 못 건드림.)
+- ThreadLocal 객체 자체가 더 이상 안 쓰여 GC되면 **키는 null**이 된다. 하지만 **값은 강한 참조라, 그 스레드가
+  살아 있는 한 안 치워지고 남는다**(이것을 stale entry = 키 없는 유령 값이라 한다).
+- 스레드 풀은 스레드를 오래(앱 내내) 살려 둔다 → stale entry가 계속 쌓여 **메모리 누수**가 된다.
+> ★ 헷갈리는 점 — "키가 약한 참조면 알아서 정리되는 거 아닌가?" → 아니다. 정리되는 건 '키'뿐이고 '값'은
+> 강한 참조라 남는다. JDK가 일부 시점에 stale entry를 청소하긴 하지만 보장되지 않는다. **확실한 해법은
+> 결국 `remove()`**. 그래서 remove()는 '보안(데이터 누수)' + '메모리(누수)' 두 이유로 필수다.
+
+### 1-5. ★ 상속 미전파 — 자식 스레드와 InheritableThreadLocal
+ThreadLocal은 '그 스레드의 칸'에만 값을 둔다. 그래서 **부모 스레드에서 set한 값은 자식 스레드로 전파되지
+않는다**(자식은 자기 칸이 비어 초기값을 본다). 비동기/병렬 처리에서 "부모에서 넣은 traceId가 자식 작업에서
+갑자기 사라지는" 흔한 함정이다.
+```java
+ThreadLocal<String> plain = ThreadLocal.withInitial(() -> "(none)");
+plain.set("부모-traceId");
+new Thread(() -> plain.get()).start();   // 자식: "(none)" — 부모 값 안 보임
+```
+- 해결: **`InheritableThreadLocal`** — 자식 스레드를 '생성하는 시점'에 부모의 값을 자식 칸으로 복사해 준다.
+  ```java
+  ThreadLocal<String> inheritable = new InheritableThreadLocal<>();
+  inheritable.set("부모-traceId");
+  new Thread(() -> inheritable.get()).start();   // 자식: "부모-traceId" (이어받음)
+  ```
+- ★ 한계: 어디까지나 '자식 생성 시점 복사'다. **스레드 풀**은 이미 만들어진 스레드를 재사용하므로 '생성 시점'이
+  없어 복사가 안 일어난다 → 풀 환경에선 InheritableThreadLocal도 한계가 있어, 비동기 전파엔 별도 도구
+  (데코레이터로 컨텍스트 복사 등)를 쓴다. (실측: 일반 ThreadLocal은 자식에서 초기값, InheritableThreadLocal은 부모 값.)
+
+### 1-6. 12.1·앞으로와의 연결
 - 12.1: 로그 추적기를 만들었지만 '흩어진 호출'이 문제였다 → 이후 프록시/AOP로 분리(12.4~).
 - 12.2(여기): 그 추적기에 상태(traceId·깊이)를 안전하게 담는 토대를 ThreadLocal로 마련.
 - 이후: 트랜잭션도 "현재 트랜잭션"을 ThreadLocal로 보관해 같은 스레드 안에서 공유한다(Spring의
@@ -106,6 +140,7 @@ try {
 - `Example1_FieldStateRace` — 싱글톤 필드 Tracer를 3스레드 동시 사용 → 섞임 재현.
 - `Example2_ThreadLocalIsolation` — 똑같은 시나리오인데 ThreadLocal로 → 섞임 없음(대조).
 - `Example3_ThreadLocalLeakInPool` — 스레드 1개 풀로 재사용 강제 → remove() 누락 시 누수, finally clear() 시 해결.
+- `Example4_InheritableThreadLocal` — 일반 ThreadLocal은 자식 스레드에 전파 안 됨 / InheritableThreadLocal은 부모 값 이어받음.
 
 ### 실행
 **프로젝트 루트(`C:\develop\study\spring-fundamentals`)에서 실행**한다.
@@ -113,6 +148,7 @@ try {
 ./gradlew runStage -Pmain=com.study.part12_aop.s02_threadlocal.Example1_FieldStateRace
 ./gradlew runStage -Pmain=com.study.part12_aop.s02_threadlocal.Example2_ThreadLocalIsolation
 ./gradlew runStage -Pmain=com.study.part12_aop.s02_threadlocal.Example3_ThreadLocalLeakInPool
+./gradlew runStage -Pmain=com.study.part12_aop.s02_threadlocal.Example4_InheritableThreadLocal
 ```
 
 ### 실행 결과 — 가설과 실제 비교 (실측)
@@ -144,6 +180,15 @@ try {
 - remove()를 빼먹으면 같은 스레드를 재사용한 B가 A의 traceId를 본다(보안 사고). finally에서 clear()하면
   B는 초기값 `(none)`만 본다. ✅ → **remove()는 선택이 아니라 필수.**
 
+예제4 (자식 스레드 전파):
+```
+[main(부모)] plain=부모-traceId, inheritable=부모-traceId
+[child(자식)] plain       = (none)        <- 일반 ThreadLocal: 부모 값 안 보임
+[child(자식)] inheritable = 부모-traceId   <- InheritableThreadLocal: 부모 값 이어받음
+```
+- 일반 ThreadLocal 값은 자식 스레드로 전파되지 않고(초기값), InheritableThreadLocal만 부모 값을 복사받는다. ✅
+  (단 스레드 풀 재사용에는 한계 — 비동기 전파는 별도 도구 필요.)
+
 ---
 
 ## 3. 자기 점검
@@ -161,6 +206,16 @@ try {
   - 내 답: 스레드 풀이 스레드를 재사용하므로, 안 지우면 다음 요청이 같은 스레드의 이전 값을 보게 된다
     (로그 섞임을 넘어 다른 사용자 인증/데이터 노출 = 보안 사고). 처리 중 예외가 나도 무조건 비우도록
     finally에 둔다(커넥션을 finally에서 반납하는 것과 같은 사고).
+
+- **Q. remove()를 안 하면 메모리 누수도 나나? 키가 약한 참조인데 왜?**
+  - 내 답: 난다. ThreadLocalMap은 키만 약한 참조, 값은 강한 참조다. ThreadLocal이 GC돼 키가 null이 돼도
+    값은 스레드가 살아 있는 한 남는다(stale entry). 스레드 풀은 스레드가 오래 살아 stale entry가 쌓여 메모리
+    누수가 된다. 확실한 해법은 remove(). 그래서 remove()는 보안+메모리 두 이유로 필수.
+
+- **Q. ThreadLocal 값은 자식 스레드에 전파되나?**
+  - 내 답: 안 된다. 자식은 자기 칸만 보므로 부모가 set한 값이 안 보인다(초기값). InheritableThreadLocal을
+    쓰면 자식 '생성 시점'에 부모 값을 복사해 전파한다. 단 스레드 풀(재사용)은 생성 시점이 없어 한계라,
+    비동기 전파는 별도 도구가 필요하다.
 
 - **Q. ThreadLocal은 PART 12의 AOP/트랜잭션과 어떻게 연결되나?**
   - 내 답: 로그 추적기의 traceId·깊이를 안전히 보관하는 토대이며, Spring의 트랜잭션 동기화
