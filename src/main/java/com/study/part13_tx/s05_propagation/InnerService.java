@@ -43,4 +43,14 @@ public class InnerService {
         System.out.println("    [inner REQUIRES_NEW] B에 +100 후 예외 발생 -> '이 새 트랜잭션만' 롤백");
         throw new RuntimeException("inner 실패(REQUIRES_NEW)");
     }
+
+    // NESTED + 실패: 외부와 '같은 물리 트랜잭션' 안의 Savepoint. 외부가 이 예외를 잡으면 Savepoint까지만
+    // 부분 롤백(B+100 취소)되고 외부는 계속 진행할 수 있다. 단 REQUIRES_NEW와 달리 커넥션은 외부와 공유하며,
+    // 외부가 나중에 롤백되면 이 NESTED 작업도 함께 사라진다(외부에 종속). DataSourceTransactionManager 필요.
+    @Transactional(propagation = Propagation.NESTED)
+    public void addAndFailNested() {
+        dao.addBalance("B", 100);
+        System.out.println("    [inner NESTED] B에 +100 후 예외 발생 -> Savepoint까지만 부분 롤백");
+        throw new RuntimeException("inner 실패(NESTED)");
+    }
 }

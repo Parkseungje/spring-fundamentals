@@ -59,4 +59,17 @@ public class OuterService {
         }
         System.out.println("    [outer] 정상 종료 -> 외부는 커밋(A-100만 반영, 내부 B는 별도 롤백)");
     }
+
+    // (5) NESTED + 내부 실패를 외부가 삼킴: 내부는 외부와 '같은 트랜잭션 안의 Savepoint'라, Savepoint까지만
+    //     부분 롤백되고 외부는 계속 진행해 커밋된다(REQUIRES_NEW와 결과는 비슷하나 커넥션 공유 + 외부 종속).
+    @Transactional
+    public void nestedInnerFailCaught() {
+        dao.addBalance("A", -100);
+        try {
+            inner.addAndFailNested();
+        } catch (RuntimeException e) {
+            System.out.println("    [outer] 내부(NESTED) 예외를 catch로 삼킴: " + e.getMessage());
+        }
+        System.out.println("    [outer] 정상 종료 -> 외부 커밋(A-100 반영, 내부 B는 Savepoint까지 롤백)");
+    }
 }

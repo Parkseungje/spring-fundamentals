@@ -65,6 +65,27 @@ public void outer() {
 - 결과(실측): A=900(외부 커밋), B=1000(내부만 롤백). UnexpectedRollbackException 없음.
 - ⚠️ **주의**: REQUIRES_NEW는 외부+내부가 **동시에 커넥션 2개**를 점유한다. 남용하면 커넥션 풀 고갈(10.2) 위험.
 
+### 1-4b. ★ NESTED vs REQUIRES_NEW — 둘 다 "내부만 롤백"인데 뭐가 다른가
+결과(외부 커밋·내부만 롤백)는 비슷한데 메커니즘이 다르다. 면접 단골 비교다.
+
+| | REQUIRES_NEW | NESTED |
+|---|---|---|
+| 트랜잭션 | **별도 물리 트랜잭션** | 같은 물리 트랜잭션의 **Savepoint** |
+| 커넥션 | 2개(외부 보류 + 새 것) | 1개(외부와 **공유**) |
+| 내부 롤백 | 그 트랜잭션만 롤백 | Savepoint까지만 부분 롤백 |
+| 내부 커밋 후 외부가 롤백되면 | 내부는 **이미 확정, 살아남음** | 내부도 **함께 롤백**(외부에 종속) |
+| 지원 | 대부분 | JDBC Savepoint 필요 — **DataSourceTransactionManager는 O, JpaTransactionManager는 X** |
+
+- 핵심 차이: REQUIRES_NEW는 **완전 독립**(외부가 죽어도 내부는 산다), NESTED는 **외부에 종속**(외부가 죽으면
+  내부도 죽는다). "독립적으로 꼭 남겨야 하는 이력/로그"는 REQUIRES_NEW, "외부 안에서 부분 롤백만 하고 싶다"면 NESTED.
+- 실측(예제4): NESTED 내부 실패를 외부가 잡으면 A=900(외부 커밋), B=1000(Savepoint 롤백). 결과는 REQUIRES_NEW와
+  같아 보이지만 커넥션 공유·외부 종속이라는 점이 다르다.
+- ★ 주의: NESTED는 **JpaTransactionManager에서 미지원**(PART 14). 이 단원은 DataSourceTransactionManager라 동작한다.
+
+> ★ 전파가 동작하려면 — '다른 빈'을 거쳐야 한다(13.3 전제). 전파 옵션도 프록시 기반이라, 같은 클래스 안에서
+> `this.inner()`로 부르면 전파(REQUIRES_NEW/NESTED 포함)가 **아예 무시**된다(내부 호출=프록시 우회). 그래서 이
+> 단원의 inner는 전부 '별도 빈(InnerService)'으로 두고 outer가 주입받아 호출한다. 같은 클래스 메서드면 전파가 안 먹는다.
+
 ### 1-5. 전파 7옵션과 실무
 | 옵션 | 진행 중 트랜잭션이 있을 때 | 없을 때 |
 |---|---|---|
@@ -77,6 +98,8 @@ public void outer() {
 | NESTED | Savepoint로 중첩(부분 롤백 가능, 10.4) | 새로 시작 |
 
 - 실무는 **REQUIRED**(대부분) + **REQUIRES_NEW**(로그·이력처럼 본 작업과 독립적으로 남겨야 할 때) 중심.
+- 나머지 옵션의 쓰임(드묾): **MANDATORY**="반드시 기존 트랜잭션 안에서만 호출돼야 하는 메서드 보호(없으면 에러)",
+  **NOT_SUPPORTED**="대용량 조회 등을 트랜잭션 없이 실행", **NEVER**="트랜잭션이 있으면 안 되는 작업", **SUPPORTS**="있으면 참여, 없어도 그만".
 - 지정: `@Transactional(propagation = Propagation.REQUIRES_NEW)`.
 
 ---
@@ -89,8 +112,8 @@ public void outer() {
 
 ### 코드 (`com.study.part13_tx.s05_propagation`)
 - `InnerService`(REQUIRED/REQUIRES_NEW 메서드), `OuterService`(4가지 시나리오). 관찰은 A/B 잔액.
-- `Example1_Required` / `Example2_UnexpectedRollback` / `Example3_RequiresNew`.
-- (트랜잭션 설정·AccountDao는 13.2의 `@Import(TxConfig.class)` 재사용.)
+- `Example1_Required` / `Example2_UnexpectedRollback` / `Example3_RequiresNew` / `Example4_Nested`.
+- (트랜잭션 설정·AccountDao는 13.2의 `@Import(TxConfig.class)` 재사용. inner는 별도 빈 — 전파는 프록시 경유 필요.)
 
 ### 실행
 **프로젝트 루트(`C:\develop\study\spring-fundamentals`)에서 실행**한다.
@@ -98,6 +121,7 @@ public void outer() {
 ./gradlew runStage -Pmain=com.study.part13_tx.s05_propagation.Example1_Required
 ./gradlew runStage -Pmain=com.study.part13_tx.s05_propagation.Example2_UnexpectedRollback
 ./gradlew runStage -Pmain=com.study.part13_tx.s05_propagation.Example3_RequiresNew
+./gradlew runStage -Pmain=com.study.part13_tx.s05_propagation.Example4_Nested
 ```
 
 ### 실행 결과 — 가설과 실제 비교 (실측)
@@ -115,6 +139,12 @@ public void outer() {
   내부(별도 트랜잭션)만 롤백, 외부 커밋 -> A=900, B=1000 (예외 없음)
 ```
 - REQUIRED는 묶여서 함께 롤백, 삼켜도 UnexpectedRollback, REQUIRES_NEW는 분리되어 외부만 커밋. ✅
+
+예제4 (NESTED):
+```
+NESTED 내부 실패를 외부가 삼킴 -> Savepoint까지 부분 롤백, 외부 커밋 -> A=900, B=1000
+```
+- 결과는 REQUIRES_NEW와 같아 보이나, NESTED는 외부와 커넥션을 공유하고 외부가 롤백되면 함께 롤백된다(외부 종속). ✅
 
 ---
 
@@ -134,3 +164,12 @@ public void outer() {
 
 - **Q. REQUIRED와 REQUIRES_NEW를 한 줄로 구분하면?**
   - 내 답: REQUIRED=있으면 '참여'(한 트랜잭션), REQUIRES_NEW=항상 '새 트랜잭션'(분리). 실무는 이 둘이 중심.
+
+- **Q. NESTED와 REQUIRES_NEW의 차이는?**
+  - 내 답: REQUIRES_NEW는 별도 물리 트랜잭션(커넥션 2개, 완전 독립 — 외부가 롤백돼도 내부는 산다). NESTED는
+    같은 트랜잭션 안 Savepoint(커넥션 1개, 부분 롤백 가능하나 외부가 롤백되면 내부도 함께 롤백=종속). NESTED는
+    JpaTransactionManager 미지원, DataSourceTransactionManager는 지원.
+
+- **Q. 전파 옵션은 같은 클래스 내부 호출에서도 동작하나?**
+  - 내 답: 아니다. 전파도 프록시 기반이라 this.inner()로 부르면 전파(REQUIRES_NEW/NESTED 포함)가 무시된다
+    (13.3 내부 호출 함정). 전파를 적용하려면 별도 빈을 거쳐 호출해야 한다.
