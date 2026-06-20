@@ -95,6 +95,10 @@ public class JoinDemo {
             // UNION ALL : 두 결과를 그대로 이어 붙인다(중복 검사 안 함) -> 2 + 2 = 4줄(김개발 2, 최개발 2). 더 빠름.
             // UNION     : 그렇게 쌓은 뒤 '똑같은 줄'을 합친다(중복 제거) -> 4줄 -> 2줄.
             // 즉 두 조회 결과가 겹칠 때만 개수가 갈린다(안 겹치면 UNION과 UNION ALL 결과 수가 같다).
+            //
+            // '똑같은 줄'의 기준: 선택한 '모든 컬럼의 값'이 행 단위로 전부 같을 때(여러 컬럼이면 전부 일치해야 함).
+            //   컬럼 이름은 무관(위치별 값으로 비교, 결과명은 첫 SELECT 것). 컬럼 수/타입 일치는 전제 조건.
+            //   NULL은 일반 비교와 달리 UNION 중복 판정에선 NULL끼리 '같다'고 보고 합친다.
             System.out.println("== UNION (두 조회 결과를 세로로 합치되 중복 제거) ==");
             print(st, "select name from employee where dept_id = 1 " +
                     "union " +
