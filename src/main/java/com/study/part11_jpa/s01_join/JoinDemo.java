@@ -82,6 +82,31 @@ public class JoinDemo {
             print(st, "select s.name student, c.title course from student s " +
                     "join enrollment en on en.student_id = s.id " +
                     "join course c on c.id = en.course_id order by s.id, c.id");
+
+            // ── (추가4) UNION vs UNION ALL ──
+            // JOIN은 두 테이블을 '가로로'(열을 붙여) 합쳤다. UNION은 두 '조회 결과'를 '세로로'(행을 이어) 합친다.
+            // 조건: 두 SELECT의 '컬럼 수와 타입'이 같아야 한다. UNION은 중복 행을 제거(distinct), UNION ALL은
+            // 중복도 그대로 둔다(그래서 더 빠름).
+            // 아래 두 조회는 결과가 겹친다: (a) 개발(dept_id=1) 직원 = 김개발,최개발 / (b) 이름에 '개발' 포함 = 김개발,최개발.
+            System.out.println("== UNION (두 조회 결과를 세로로 합치되 중복 제거) ==");
+            print(st, "select name from employee where dept_id = 1 " +
+                    "union " +
+                    "select name from employee where name like '%개발%' order by name");
+            System.out.println("== UNION ALL (중복도 그대로) ==");
+            print(st, "select name from employee where dept_id = 1 " +
+                    "union all " +
+                    "select name from employee where name like '%개발%' order by name");
+
+            // ── (추가5) FULL OUTER JOIN 흉내 = LEFT UNION RIGHT방향 ──
+            // 양쪽의 '매칭 안 되는 행'을 모두 보고 싶을 때가 FULL OUTER다. MySQL은 FULL OUTER를 지원하지 않아,
+            // 'employee 기준 LEFT' UNION 'department 기준 LEFT'로 흉내 낸다(UNION이 겹치는 매칭 행은 합쳐 줌).
+            // 직원 없는 부서 '인사'를 추가해 두 종류의 NULL(부서 없는 직원 / 직원 없는 부서)이 모두 나오게 한다.
+            st.execute("insert into department values (3,'인사')"); // 직원이 없는 부서
+            System.out.println("== FULL OUTER 흉내 (LEFT UNION 반대방향 LEFT) ==");
+            print(st, "select e.name emp, d.name dept from employee e left join department d on e.dept_id = d.id " +
+                    "union " +
+                    "select e.name emp, d.name dept from department d left join employee e on e.dept_id = d.id " +
+                    "order by emp nulls last");
         }
 
         System.out.println("=> 정규화로 흩어진 정보를 JOIN으로 합친다. INNER=교집합(매칭만), LEFT=왼쪽 전부(없으면 NULL).");
