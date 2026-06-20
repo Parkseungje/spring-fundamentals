@@ -50,6 +50,22 @@ class TxService {
 > ★ 어떻게 '안 걸린 것'을 확인하나 — `TransactionSynchronizationManager.isActualTransactionActive()`로
 > 메서드 안에서 "지금 진짜 트랜잭션이 도는가?"를 찍어 보면 된다. 프록시를 거쳤으면 true, 내부 호출로
 > 우회됐으면 false. 실측에서 예제1은 true, 예제2(내부 호출)는 false가 나온다.
+>
+> ★ 조용히 실패한다 — 내부 호출로 트랜잭션이 안 걸려도 **예외가 나지 않는다**. 그냥 트랜잭션이 '없는 것처럼'
+> 동작할 뿐이라(롤백·격리·전파 전부 무시) 한참 뒤 데이터 정합성 문제로야 발견되기 쉽다. 그래서 위 관찰 도구나
+> SQL 로그로 "정말 트랜잭션이 도는지" 확인하는 습관이 중요하다.
+
+### 1-2b. ★ 형제 함정 — private 메서드 @Transactional도 안 걸린다
+내부 호출과 같은 뿌리의 함정이 하나 더 있다. **Spring AOP 프록시는 `public` 메서드만 가로챈다.**
+- `@Transactional`을 **private(또는 protected/package-private) 메서드에 붙이면 아예 안 걸린다.** 프록시가
+  그 메서드를 오버라이드/위임할 수 없기 때문이다(외부에서 부를 수도 없고, CGLIB도 public/protected만 오버라이드).
+- 즉 "프록시가 못 거치는 메서드"는 둘 다 트랜잭션이 무시된다:
+  - 내부 호출(this.method) → 프록시 우회(공간).
+  - private 메서드 → 애초에 프록시가 안 만듦(가시성).
+- 해결도 같다 — **public 메서드로 두고, 별도 빈(또는 프록시 경유)으로 호출**한다.
+
+> ★ @Transactional만의 문제가 아니다 — `@Cacheable`·`@Async`·`@Retryable` 등 **AOP 프록시 기반 어노테이션
+> 전부**가 똑같이 내부 호출·private에서 무시된다(전부 프록시를 거쳐야 동작하니까). 한 번 원리를 알면 모든 곳에 적용된다.
 
 ### 1-3. 해결책 — 권장은 '별도 빈으로 분리'
 함정의 원인은 "같은 객체 내부 호출이라 프록시를 못 거치는 것"이다. 그러니 **다른 빈을 거치게** 만들면 된다.
@@ -69,9 +85,19 @@ class OuterService {
   관점에서도 더 낫다. 그래서 가장 권장된다.
 
 (2) 자기 자신을 프록시로 호출 (대안)
-- `AopContext.currentProxy()`로 현재 프록시를 얻어 `((TxService) AopContext.currentProxy()).internal()` 호출.
-  (`@EnableAspectJAutoProxy(exposeProxy = true)` 필요.) 또는 자기 자신을 주입(self-injection)받아 호출.
-- 동작은 하지만 코드가 지저분하고 의도가 안 드러나 권장도는 낮다.
+```java
+@EnableAspectJAutoProxy(exposeProxy = true)   // 프록시를 AopContext에 노출(필수)
+// ...
+public void externalViaProxy() {
+    // this.internal()(우회) 대신 '현재 프록시'를 얻어 호출 -> 프록시 경유 -> @Transactional 적용
+    SelfProxyService proxy = (SelfProxyService) AopContext.currentProxy();
+    proxy.internal();
+}
+```
+- 또는 자기 자신을 주입(self-injection)받아 `self.internal()` 호출(보통 `@Lazy` 자기 주입).
+- 실측(예제4): this.internal()은 false였지만, 프록시.internal()은 트랜잭션 활성=true. "내부 호출이라도
+  프록시로 돌리면 걸린다"가 증명된다.
+- 동작은 하지만 `exposeProxy=true` 설정 + 코드가 지저분하고 의도가 안 드러나 권장도는 낮다(별도 빈 분리가 우선).
 
 (3) AspectJ 컴파일 방식으로 전환
 - 프록시가 아니라 바이트코드에 직접 위빙하므로 내부 호출도 가로챈다(12.11). 설정 비용이 커서 특수한 경우만.
@@ -92,6 +118,7 @@ class OuterService {
 ### 코드 (`com.study.part13_tx.s03_internal_call`)
 - `TxService` — external()(@Transactional 없음) + internal()(@Transactional), isActualTransactionActive() 출력.
 - `Example1_ExternalCallWorks` / `Example2_InternalCallFails` / `Example3_SeparateBean`.
+- `SelfProxyService` + `Example4_SelfProxyCall` — AopContext.currentProxy()로 내부 호출을 프록시 경유(해결책2).
 - (트랜잭션 설정은 13.2의 `@Import(TxConfig.class)`로 재사용.)
 
 ### 실행
@@ -100,6 +127,7 @@ class OuterService {
 ./gradlew runStage -Pmain=com.study.part13_tx.s03_internal_call.Example1_ExternalCallWorks
 ./gradlew runStage -Pmain=com.study.part13_tx.s03_internal_call.Example2_InternalCallFails
 ./gradlew runStage -Pmain=com.study.part13_tx.s03_internal_call.Example3_SeparateBean
+./gradlew runStage -Pmain=com.study.part13_tx.s03_internal_call.Example4_SelfProxyCall
 ```
 
 ### 실행 결과 — 가설과 실제 비교 (실측)
@@ -122,6 +150,12 @@ InnerService.doWork() -> 트랜잭션 활성? true  (적용됨!)
 - 같은 @Transactional 메서드인데, **호출 경로**에 따라 true/false가 갈렸다. 내부 호출(this)만 false. ✅ →
   별도 빈으로 분리하면 프록시를 거쳐 다시 true(해결).
 
+예제4 (해결책2 — 프록시 경유 호출):
+```
+externalViaProxy() -> 현재 프록시로 internal() 호출 -> 트랜잭션 활성? true
+```
+- this.internal()(예제2, false)과 달리 AopContext.currentProxy()로 부르면 프록시를 거쳐 true. ✅ (단 권장은 별도 빈 분리.)
+
 ---
 
 ## 3. 자기 점검
@@ -136,6 +170,14 @@ InnerService.doWork() -> 트랜잭션 활성? true  (적용됨!)
 - **Q. 가장 권장되는 해결책과 그 이유는?**
   - 내 답: @Transactional 메서드를 별도 빈으로 분리해 호출이 프록시를 거치게 한다. 함정 회피뿐 아니라
     트랜잭션 작업을 독립 책임으로 떼어내 SRP에도 부합. (대안: AopContext/self-injection, AspectJ 전환.)
+
+- **Q. private 메서드에 @Transactional을 붙이면?**
+  - 내 답: 안 걸린다. Spring AOP 프록시는 public 메서드만 가로채므로 private/protected는 프록시가 처리 못 한다.
+    내부 호출(this)과 같은 뿌리의 함정 — 둘 다 '프록시를 못 거치는 메서드'다. public으로 두고 별도 빈/프록시 경유로 호출.
+
+- **Q. 내부 호출 함정은 @Transactional만의 문제인가?**
+  - 내 답: 아니다. @Cacheable/@Async/@Retryable 등 AOP 프록시 기반 어노테이션 전부가 내부 호출·private에서
+    무시된다(전부 프록시를 거쳐야 동작하므로). 원리는 동일.
 
 - **Q. 13.3과 13.4(@PostConstruct)의 공통 원리는?**
   - 내 답: "프록시를 안 거치면 @Transactional은 없는 것". 13.3은 this 호출로 프록시를 우회(공간), 13.4는
