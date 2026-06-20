@@ -26,12 +26,44 @@
 
 ## 1. 학습 내용 — 묶어서 안전하게
 
-### 트랜잭션과 ACID
-- **A 원자성(Atomicity)**: 묶음이 **모두 성공(commit) 또는 모두 실패(rollback)**. 이체 도중 실패하면
-  출금도 없던 일로. (PART 7의 Atomic은 '변수 하나', DB Atomicity는 '여러 작업 묶음'이라는 점이 다름)
-- **C 일관성(Consistency)**: 트랜잭션 완료 후에도 제약조건(NOT NULL/UNIQUE/FK/비즈니스 규칙)이 항상 지켜짐.
-- **I 격리성(Isolation)**: 각 트랜잭션은 독립적으로 실행되는 것처럼 보임. 커밋 전 변경은 남에게 안 보임.
-- **D 지속성(Durability)**: commit된 데이터는 영구 보존(WAL 로그·fsync). 시스템이 다운돼도 살아남음.
+### 트랜잭션과 ACID — 네 글자를 '코드로' 하나씩
+ACID는 트랜잭션이 보장해야 할 4가지 성질의 머리글자다. 추상적으로 외우지 말고 "각 글자가 코드에서
+무엇으로 나타나는가"로 잡자. 아래 각 성질 끝에 그것을 직접 보여주는 예제를 달아 두었다.
+
+- **A 원자성(Atomicity) = "모두 성공 아니면 모두 실패"** → 실행 '방식'에 대한 약속.
+  - 이체(출금+입금)처럼 묶인 작업은 **전부 commit 되거나, 하나라도 실패하면 전부 rollback** 된다. 중간에
+    출금만 되고 입금이 안 되는 '반쪽 상태'는 없다.
+  - PART 7의 `Atomic`은 '변수 하나'의 원자 연산, DB Atomicity는 '여러 작업(여러 행·테이블) 묶음'이라는 점이 다르다.
+  - 👉 코드: `Example1_Atomicity` (도중 실패 → 출금까지 취소).
+
+- **C 일관성(Consistency) = "항상 올바른 상태로만 이동"** → 실행 결과 '상태'에 대한 약속.
+  - 트랜잭션이 끝났을 때 DB가 **정의된 모든 규칙(제약조건·불변식)을 여전히 만족**한다. 규칙을 깨는 변경은
+    DB가 거부하거나 롤백되어, **잘못된 상태로는 절대 넘어가지 않는다.**
+  - 규칙의 종류: ① DB가 스스로 지키는 제약(CHECK·NOT NULL·UNIQUE·FK) ② 비즈니스 불변식(예: "두 계좌 합계 일정").
+  - ★ 원자성과의 차이: 원자성은 '어떻게 실행되나(모두/아무것도)', 일관성은 '결과가 규칙에 맞나(올바름)'.
+    원자성·격리성·제약조건이 **함께** 작동해 일관성을 결과적으로 만든다(원자성은 일관성의 '도구').
+  - 👉 코드: `Example5_Consistency` (음수 잔액 CHECK 위반 거부 / 합계 불변식 유지).
+
+- **I 격리성(Isolation) = "커밋 전 변경은 남에게 안 보임"** → 동시 실행에 대한 약속.
+  - 여러 트랜잭션이 동시에 돌아도 **서로 독립적으로 실행되는 것처럼** 보인다. 내가 commit하기 전 변경은
+    다른 세션에 안 보인다. 얼마나 강하게 격리할지는 '격리 수준'으로 조절한다(아래 절).
+  - 👉 코드: `Example2_CommitVisibility` (커밋 전 옛 값/커밋 후 새 값), `Example3_ReadPhenomena` (격리 수준별 이상현상).
+
+- **D 지속성(Durability) = "커밋된 데이터는 재시작해도 안 사라짐"** → 영속에 대한 약속.
+  - 한 번 commit된 변경은 **영구적**이다. DB는 commit 시점에 변경을 디스크(WAL 로그 등)에 안전하게
+    기록(fsync)하므로, 그 직후 정전·재시작이 나도 복구된다.
+  - ★ 격리성과 헷갈리지 말 것: 둘 다 'commit'을 경계로 하지만 — 격리성은 "commit 전엔 남에게 안 보임",
+    지속성은 "commit 후엔 재시작해도 안 사라짐". 시점·관점이 다르다.
+  - 👉 코드: `Example6_Durability` (커밋분은 DB 재기동 후 생존, 미커밋은 소멸).
+
+한눈에:
+
+| 글자 | 한 줄 정의 | 관점 | 코드 |
+|---|---|---|---|
+| A 원자성 | 모두 성공 or 모두 실패 | 실행 방식 | Example1 |
+| C 일관성 | 항상 규칙을 만족하는 올바른 상태로만 | 결과 상태 | Example5 |
+| I 격리성 | 커밋 전 변경은 남에게 안 보임 | 동시 실행 | Example2, Example3 |
+| D 지속성 | 커밋된 데이터는 재시작해도 보존 | 영속 | Example6 |
 
 ### JDBC로 트랜잭션 다루기
 ```java
@@ -111,19 +143,24 @@ conn.commit();                        // -> A 출금만 반영
 > - **가설 3**: READ COMMITTED에선 Non-Repeatable Read·Phantom Read가 발생하고, 격리 수준을 REPEATABLE
 >   READ로 올리면 Non-Repeatable Read가 막힌다.
 > - **가설 4**: Savepoint로 부분 롤백하면 저장점 이후 작업만 취소되고 앞 작업은 유지된다.
+> - **가설 5(C 일관성)**: 음수 잔액(CHECK 위반)은 DB가 거부해 롤백되고, 깨진 불변식(합계≠2000)은 커밋되지 않아 항상 올바른 상태로 남는다.
+> - **가설 6(D 지속성)**: 커밋된 데이터는 DB를 닫았다 다시 열어도 살아남고, 커밋 안 한 데이터는 사라진다.
 
-### 코드 (`com.study.part10_db.s04_transaction`)
-- `Example1_Atomicity` — 이체를 (A) 도중 실패→rollback / (B) 정상→commit으로 비교.
-- `Example2_CommitVisibility` — 두 세션으로 "커밋 전 변경은 안 보이고, 커밋 후 보인다" 확인(Dirty Read 방지).
-- `Example3_ReadPhenomena` — (A) READ COMMITTED에서 Non-Repeatable Read 발생 / (B) REPEATABLE READ에서
-  방지 / (C) Phantom Read 발생.
+### 코드 (`com.study.part10_db.s04_transaction`) — ACID 각 성질 + 격리/부분롤백
+- `Example1_Atomicity` (A 원자성) — 이체를 (A) 도중 실패→rollback / (B) 정상→commit으로 비교.
+- `Example5_Consistency` (C 일관성) — (A) CHECK(balance≥0) 위반 거부 / (B) 합계 불변식 유지.
+- `Example2_CommitVisibility` (I 격리성) — "커밋 전 변경은 안 보이고, 커밋 후 보인다"(Dirty Read 방지).
+- `Example6_Durability` (D 지속성) — 파일 H2로 재기동 후 커밋분 생존/미커밋 소멸.
+- `Example3_ReadPhenomena` — 격리 수준별 이상현상(Non-Repeatable/Phantom) 재현.
 - `Example4_Savepoint` — 저장점까지만 부분 롤백(앞 작업 유지).
 
 ### 실행
 **프로젝트 루트(`C:\develop\study\spring-fundamentals`)에서 실행**한다.
 ```bash
 ./gradlew runStage -Pmain=com.study.part10_db.s04_transaction.Example1_Atomicity
+./gradlew runStage -Pmain=com.study.part10_db.s04_transaction.Example5_Consistency
 ./gradlew runStage -Pmain=com.study.part10_db.s04_transaction.Example2_CommitVisibility
+./gradlew runStage -Pmain=com.study.part10_db.s04_transaction.Example6_Durability
 ./gradlew runStage -Pmain=com.study.part10_db.s04_transaction.Example3_ReadPhenomena
 ./gradlew runStage -Pmain=com.study.part10_db.s04_transaction.Example4_Savepoint
 ```
@@ -148,18 +185,39 @@ Example4 (Savepoint) 실측:
 A 100 출금 -> savepoint -> B 100 입금 -> rollback(sp) -> commit
 결과: A=900, B=1000   (A 출금만 반영, B 입금은 취소 = 부분 롤백)
 ```
+Example5 (C 일관성) 실측:
+```
+(A) A에서 1500 출금 시도 -> CHECK(balance>=0) 위반 거부 -> 롤백 -> A=1000 (음수 안 됨)
+(B) A 300 출금 후 입금 실패 -> 롤백 -> 합계 2000 유지 (불변식 보존)
+```
+Example6 (D 지속성) 실측:
+```
+1차: insert(1 커밋) + insert(2 미커밋) 후 DB 종료
+2차(재기동): id=1만 존재  -> 커밋분 생존(true)=지속성, 미커밋 소멸(false)
+```
 - 가설 1: 실패 시 출금까지 취소(원자성), 성공 시 둘 다 반영. ✅
 - 가설 2: commit 전엔 옛 값, commit 후 새 값(격리성, H2 기본 READ COMMITTED). ✅
 - 가설 3: READ COMMITTED에서 Non-Repeatable/Phantom 발생, REPEATABLE READ가 Non-Repeatable 방지. ✅
 - 가설 4: 저장점 이후(B 입금)만 취소, 앞 작업(A 출금)은 유지. ✅
+- 가설 5: CHECK 위반 거부로 음수 잔액 안 됨, 깨진 합계는 커밋 안 됨(일관성). ✅
+- 가설 6: 커밋분(1번) 재기동 후 생존, 미커밋(2번) 소멸(지속성). ✅
 
 ---
 
 ## 3. 자기 점검
 
-- **Q. ACID 4가지를 한 줄씩 설명하면?**
-  - 내 답: A=모두 성공 or 모두 실패, C=완료 후 제약/규칙 항상 유지, I=트랜잭션끼리 독립(커밋 전 변경 안 보임),
-    D=커밋된 데이터는 영구 보존.
+- **Q. ACID 4가지를 한 줄씩 + 각각 코드로 어떻게 확인했나?**
+  - 내 답: A 원자성=모두 성공 or 모두 실패(Example1, 도중 실패 시 출금까지 취소). C 일관성=항상 규칙(제약·
+    불변식)을 만족하는 올바른 상태로만 이동(Example5, CHECK 위반 거부·합계 유지). I 격리성=커밋 전 변경은
+    남에게 안 보임(Example2). D 지속성=커밋된 데이터는 재시작해도 보존(Example6, 파일 H2 재기동 후 생존).
+
+- **Q. 원자성과 일관성은 뭐가 다른가?**
+  - 내 답: 원자성은 '실행 방식'(모두/아무것도), 일관성은 '결과 상태가 규칙에 맞는가(올바름)'. 원자성·격리성·
+    제약조건이 함께 작동해 일관성을 만든다(원자성은 일관성을 지키는 도구). 깨진 중간 상태를 커밋 안 함으로써 일관성 유지.
+
+- **Q. 격리성과 지속성은 둘 다 commit이 기준인데 뭐가 다른가?**
+  - 내 답: 격리성은 "commit '전'엔 다른 세션에 안 보임", 지속성은 "commit '후'엔 재시작해도 안 사라짐".
+    관점과 시점이 다르다. (Example2 vs Example6)
 
 - **Q. DB의 Atomicity와 PART 7의 Atomic의 차이는?**
   - 내 답: PART 7 Atomic은 '변수 하나'의 원자 연산, DB Atomicity는 '여러 작업(여러 행/테이블) 묶음'을
