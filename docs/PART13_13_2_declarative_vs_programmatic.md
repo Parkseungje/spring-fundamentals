@@ -35,6 +35,22 @@ txTemplate.execute(status -> {
 ```
 - 장점: 트랜잭션 경계를 세밀하게 제어(부분 커밋, 조건부 롤백 등).
 - 단점: `execute(콜백)` 구조가 **비즈니스 로직과 뒤섞인다**(기술-비즈니스 강결합). 메서드마다 반복.
+- 반환값이 없으면 `executeWithoutResult(status -> {...})`로 더 간결히 쓸 수 있다(`return null` 불필요).
+
+#### ★ 프로그래밍 방식만의 능력 — setRollbackOnly()로 '예외 없이' 롤백
+선언적(@Transactional)은 **예외를 던져야** 롤백된다. 그런데 "예외는 안 던지지만(정상 흐름 유지) 이 작업은
+취소"하고 싶을 때가 있다(검증 실패·비즈니스 규칙 위반 등). 프로그래밍 방식은 콜백에서 `status.setRollbackOnly()`로
+**롤백을 예약**해두면, 예외 없이도 트랜잭션이 롤백된다.
+```java
+txTemplate.execute(status -> {
+    dao.addBalance("A", -300);
+    if (검증실패) status.setRollbackOnly();  // 예외 안 던지고 '롤백 예약'
+    return null;                             // 정상 종료해도 rollbackOnly라 롤백됨
+});
+```
+- 실측: setRollbackOnly 호출 시 예외 없이도 A가 원복(1000), 호출 안 하면 커밋(700). 이것이 "프로그래밍 방식을
+  굳이 왜 쓰나"의 실제 답 중 하나(세밀한 조건부 롤백).
+- 롤백 정책: TransactionTemplate도 **자동 롤백은 언체크 예외만**(@Transactional과 동일). 예외 없이 롤백하려면 위 setRollbackOnly.
 
 ### 1-2. 선언적 방식 — @Transactional
 메서드에 `@Transactional`만 붙이면, 트랜잭션 시작/커밋/롤백을 **프록시**가 대신 처리한다(PART 12의 자동
@@ -73,6 +89,19 @@ try {
 - 이게 가능한 건 PART 12의 **빈 후처리기 + AnnotationAwareAspectJAutoProxyCreator**(12.8)가 @Transactional
   메서드를 가진 빈을 트랜잭션 프록시로 바꿔치기하기 때문. @EnableTransactionManagement(13.1의 @Import 기반)가 이를 켠다.
 
+#### PlatformTransactionManager 구현체 — 기술에 맞는 게 자동 선택된다
+선언적이든 프로그래밍이든, 실제 트랜잭션은 `PlatformTransactionManager` 구현체가 처리한다. 어떤 기술을 쓰느냐에 따라 구현체가 다르다.
+
+| 데이터 접근 기술 | 트랜잭션 매니저 구현체 |
+|---|---|
+| JDBC / MyBatis / JdbcTemplate | `DataSourceTransactionManager` |
+| JPA(Hibernate) | `JpaTransactionManager` |
+| (여러 자원 묶기, 분산) | `JtaTransactionManager` |
+
+- 이 단원의 `TxConfig`는 JdbcTemplate을 쓰므로 **`DataSourceTransactionManager`**를 등록했다.
+- Spring Boot는 보통 의존성에 맞춰 **자동 구성**한다(data-jpa면 JpaTransactionManager, jdbc면 DataSourceTransactionManager).
+- → PART 14(JPA)에선 `JpaTransactionManager`가 쓰이지만, 우리가 코드에서 `@Transactional`을 쓰는 방식은 동일하다(추상화 덕분, PART 10.3 DataSource와 같은 사상).
+
 ### 1-4. 무엇을 쓰나 — 선언적이 거의 표준
 - 선언적(@Transactional)이 압도적으로 많이 쓰인다(간결·관심사 분리). 단 함정이 많다(내부 호출 13.3,
   @PostConstruct 13.4, 체크 예외 롤백 정책, readOnly 등) — PART 13의 나머지가 이 함정들을 판다.
@@ -89,6 +118,7 @@ try {
 ### 코드 (`com.study.part13_tx.s02_declarative_vs_programmatic`)
 - `TxConfig`(H2 DataSource/JdbcTemplate/txManager/TransactionTemplate, @EnableTransactionManagement), `AccountDao`.
 - `Example1_Programmatic` / `Example2_Declarative` / `Example3_ProxyBeforeAfter`.
+- `Example4_SetRollbackOnly` — 예외 없이 setRollbackOnly()로 롤백 vs 표시 없으면 커밋.
 - (각 예제는 13.1의 `@Import(TxConfig.class)`로 공용 설정을 재사용한다.)
 
 ### 실행
@@ -97,6 +127,7 @@ try {
 ./gradlew runStage -Pmain=com.study.part13_tx.s02_declarative_vs_programmatic.Example1_Programmatic
 ./gradlew runStage -Pmain=com.study.part13_tx.s02_declarative_vs_programmatic.Example2_Declarative
 ./gradlew runStage -Pmain=com.study.part13_tx.s02_declarative_vs_programmatic.Example3_ProxyBeforeAfter
+./gradlew runStage -Pmain=com.study.part13_tx.s02_declarative_vs_programmatic.Example4_SetRollbackOnly
 ```
 
 ### 실행 결과 — 가설과 실제 비교 (실측)
@@ -115,6 +146,13 @@ A 출금 완료(아직 커밋 전) -> 예외 -> 이체 후: A=1000 B=1000
 [후] 실제 클래스 = ...AfterProxyService$$SpringCGLIB$$0 (프록시) -> 롤백 -> A=1000
 ```
 - 세 방식 모두 원자성(롤백)은 같고, 선언적/프록시 도입이 '트랜잭션 코드를 비즈니스에서 분리'함이 확인됐다. ✅
+
+예제4 (setRollbackOnly):
+```
+(A) 출금 후 setRollbackOnly() -> 예외 없이 롤백 -> A=1000 (원복)
+(B) 출금 후 표시 없음          -> 커밋          -> A=700  (반영)
+```
+- 예외를 안 던졌는데도 setRollbackOnly로 롤백됐다. ✅ → 선언적(예외 필요)과 다른, 프로그래밍 방식만의 세밀 제어.
 
 ---
 
@@ -136,3 +174,11 @@ A 출금 완료(아직 커밋 전) -> 예외 -> 이체 후: A=1000 B=1000
 - **Q. @Transactional의 기본 롤백 정책 함정은?**
   - 내 답: 언체크 예외(RuntimeException/Error)에서만 롤백하고 체크 예외는 기본 커밋된다. rollbackFor로 조정.
     (PART 11.5에서 다룬 함정.)
+
+- **Q. 예외를 안 던지고 롤백하려면? (프로그래밍 방식만의 능력)**
+  - 내 답: TransactionTemplate 콜백에서 status.setRollbackOnly()로 롤백을 예약하면, 정상 종료해도 롤백된다.
+    선언적(@Transactional)은 예외를 던져야 롤백되므로, 검증 실패 등 '예외 없는 조건부 롤백'은 프로그래밍 방식이 유리.
+
+- **Q. 트랜잭션 매니저 구현체는 기술마다 다른가?**
+  - 내 답: 그렇다. JDBC/MyBatis=DataSourceTransactionManager, JPA=JpaTransactionManager, 분산=JtaTransactionManager.
+    Spring Boot가 의존성에 맞춰 자동 구성한다. 우리가 @Transactional을 쓰는 방식은 구현체와 무관하게 동일(추상화).
