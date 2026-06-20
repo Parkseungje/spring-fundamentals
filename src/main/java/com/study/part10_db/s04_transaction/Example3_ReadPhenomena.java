@@ -29,6 +29,19 @@ public class Example3_ReadPhenomena {
     public static void main(String[] args) throws Exception {
         Class.forName("org.h2.Driver");
 
+        // Connection.TRANSACTION_* : JDBC 표준이 정의한 '트랜잭션 격리 수준' 상수들이다.
+        // 격리 수준 = "동시에 도는 다른 트랜잭션의 변경을 내가 얼마나 차단하고 보느냐". 낮을수록 빠르지만
+        // 이상현상(잘못된 읽기)에 취약하고, 높을수록 안전하지만 느리다. 상수의 숫자값도 그 순서를 따른다.
+        //   TRANSACTION_NONE(0)             : 트랜잭션 미지원
+        //   TRANSACTION_READ_UNCOMMITTED(1) : 커밋 안 된 값도 읽음(Dirty Read 허용) — 가장 약함
+        //   TRANSACTION_READ_COMMITTED(2)   : '커밋된 값만' 읽음. Dirty Read는 막지만, 같은 행을 다시 읽을 때
+        //                                     다른 트랜잭션이 수정·커밋했으면 값이 바뀜(Non-Repeatable Read 허용).
+        //                                     H2/Oracle/PostgreSQL 기본.
+        //   TRANSACTION_REPEATABLE_READ(4)  : 한 트랜잭션 안에서 같은 행을 다시 읽어도 '항상 같은 값'을 보장
+        //                                     (Non-Repeatable Read 방지). MySQL InnoDB 기본.
+        //   TRANSACTION_SERIALIZABLE(8)     : 완전 직렬화. Phantom까지 모두 방지 — 가장 강하고 가장 느림.
+        // 아래는 같은 시나리오를 (A)READ_COMMITTED와 (B)REPEATABLE_READ로 각각 돌려, 격리 수준이 올라가면
+        // Non-Repeatable Read가 막히는 것을 대조한다. (Connection.setTransactionIsolation(상수)로 적용)
         nonRepeatableRead(Connection.TRANSACTION_READ_COMMITTED, "(A) READ COMMITTED");
         nonRepeatableRead(Connection.TRANSACTION_REPEATABLE_READ, "(B) REPEATABLE READ");
         phantomRead();
@@ -42,7 +55,10 @@ public class Example3_ReadPhenomena {
              Connection writer = DriverManager.getConnection(URL, "sa", "")) {
 
             reader.setAutoCommit(false);
-            reader.setTransactionIsolation(isolation); // 격리 수준 지정
+            // 이 연결(트랜잭션)의 격리 수준을 위 Connection.TRANSACTION_* 상수로 지정한다.
+            // (A)면 READ_COMMITTED(2), (B)면 REPEATABLE_READ(4)가 들어온다. 같은 코드인데 이 값만 달라서
+            // 두 번째 읽기 결과가 갈린다 -> 격리 수준의 효과를 직접 대조.
+            reader.setTransactionIsolation(isolation);
             int first = balance(reader, "A");
             System.out.println("  reader 1차 읽기: A = " + first);
 
@@ -73,6 +89,7 @@ public class Example3_ReadPhenomena {
              Connection writer = DriverManager.getConnection(URL, "sa", "")) {
 
             reader.setAutoCommit(false);
+            // READ_COMMITTED(2)에서는 Phantom Read를 막지 못한다(행 삽입/삭제는 SERIALIZABLE에서만 방지).
             reader.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
             int firstCount = countRich(reader);
             System.out.println("  reader 1차 조회: balance >= 1000 인 행 수 = " + firstCount);
