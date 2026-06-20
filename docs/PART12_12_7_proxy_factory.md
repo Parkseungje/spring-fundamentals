@@ -87,9 +87,32 @@ pf.addAdvisor(advisor);                                     // addAdvice(전부)
   (execution(반환타입 패키지.클래스.메서드(파라미터)) 형태로 '어디에'를 기술. 자세한 문법은 12.9~12.10.)
 - 결과: order()엔 로그가 붙고 findStock()엔 안 붙는다(Pointcut이 걸러냄).
 
+> ★ Pointcut의 내부 구조 — `ClassFilter` + `MethodMatcher`. Pointcut은 단순 '메서드 필터'가 아니라 2단으로
+> 되어 있다: ①`ClassFilter`("어느 '클래스'에 적용하나") + ②`MethodMatcher`("그 클래스의 '어느 메서드'냐").
+> 그래서 `execution(* com.x.OrderService.order(..))`는 '클래스(OrderService) + 메서드(order)' 양쪽을 모두
+> 거른다. 둘 중 하나라도 안 맞으면 적용 안 됨.
+>
+> ★ Pointcut = AspectJ가 아니다 — `AspectJExpressionPointcut`은 여러 구현 중 '실무 표준'일 뿐이다. AspectJ
+> 표현식 없이 **메서드 이름만으로** 매칭하는 `NameMatchMethodPointcut`(가장 단순)도 있다.
+> ```java
+> NameMatchMethodPointcut pc = new NameMatchMethodPointcut();
+> pc.addMethodName("order");   // 이름이 order인 메서드만 (클래스는 전부 허용)
+> ```
+
+> ★ addAdvice vs addAdvisor — `addAdvice(advice)`는 사실 내부적으로 "항상 매칭되는 Pointcut(`Pointcut.TRUE`)
+> + 그 advice"인 Advisor로 감싸 등록하는 축약형이다. 그래서 모든 메서드에 적용된다. 특정 메서드에만 걸려면
+> Pointcut을 지정한 `addAdvisor`를 쓴다.
+
 ### 1-4. Spring AOP 최적화 / 다음(12.8)
 - **target 1개당 프록시 1개 + 어드바이저 N개**: 여러 AOP(로그·트랜잭션·보안)를 한 빈에 동시에 적용해도 프록시는
   하나만 만들고 그 안에 어드바이저를 여러 개 체인으로 둔다(프록시 중첩이 아님). 순서는 등록 순서 또는 `@Order`.
+- **체인은 '양파 껍질'처럼 돈다**: 어드바이저 2개(보안→로그)를 등록하면, 등록 순서대로 바깥→안쪽으로 진입하고
+  진짜 메서드를 부른 뒤 안쪽→바깥으로 복귀한다.
+  ```
+  [보안 진입] -> [로그 시작] -> (진짜 메서드) -> [로그 종료] -> [보안 복귀]
+  ```
+  각 어드바이스의 `proceed()`가 '다음 어드바이스'를 부르고, 마지막 proceed가 진짜 메서드를 부른다. 12.6처럼
+  프록시를 물리적으로 겹치는(프록시가 프록시를 감싸는) 게 아니라, **프록시 하나 안의 어드바이저 체인**이다(실측 예제4).
 - **남는 문제(12.8의 동기)**: 지금은 빈마다 ProxyFactory로 프록시를 손수 만들었다. 빈이 100개면 설정 100번
   (설정 지옥). 게다가 `@Service`·`@Repository`로 컴포넌트 스캔된 '이미 만들어진' 빈은 이렇게 바꿔치기 어렵다.
   이를 자동화하는 것이 빈 후처리기(BeanPostProcessor)와 자동 프록시 생성기다(12.8).
@@ -102,8 +125,9 @@ pf.addAdvisor(advisor);                                     // addAdvice(전부)
 >   하나가 JDK·CGLIB 양쪽에서 동일하게 동작한다. ③Pointcut+Advice=Advisor로 묶으면 특정 메서드(order)에만 적용된다.
 
 ### 코드 (`com.study.part12_aop.s07_proxy_factory`)
-- `OrderService`/`RealOrderService`(인터페이스+구현), `ConcreteService`(인터페이스 없음), `LogAdvice`(Advice).
+- `OrderService`/`RealOrderService`(인터페이스+구현), `ConcreteService`(인터페이스 없음), `LogAdvice`/`SecurityAdvice`(Advice).
 - `Example1_ProxyFactoryAutoSelect` / `Example2_AdviceUnified` / `Example3_PointcutAdvisor`.
+- `Example4_AdvisorChainOrder` — 한 프록시에 어드바이저 2개(보안→로그) 체인 + NameMatchMethodPointcut.
 
 ### 실행
 **프로젝트 루트(`C:\develop\study\spring-fundamentals`)에서 실행**한다.
@@ -111,6 +135,7 @@ pf.addAdvisor(advisor);                                     // addAdvice(전부)
 ./gradlew runStage -Pmain=com.study.part12_aop.s07_proxy_factory.Example1_ProxyFactoryAutoSelect
 ./gradlew runStage -Pmain=com.study.part12_aop.s07_proxy_factory.Example2_AdviceUnified
 ./gradlew runStage -Pmain=com.study.part12_aop.s07_proxy_factory.Example3_PointcutAdvisor
+./gradlew runStage -Pmain=com.study.part12_aop.s07_proxy_factory.Example4_AdvisorChainOrder
 ```
 
 ### 실행 결과 — 가설과 실제 비교 (실측)
@@ -134,6 +159,15 @@ pf.addAdvisor(advisor);                                     // addAdvice(전부)
 ```
 - order에만 begin/end가 붙고 findStock엔 안 붙었다. ✅ → Pointcut이 '어디에'를 걸러낸다.
 
+예제4 (어드바이저 체인 순서):
+```
+프록시 실제 클래스 = jdk.proxy1.$Proxy0 (프록시는 '하나')
+[order()]  [보안] 권한 확인(진입) -> --> [order] 시작 -> 비즈니스 -> <-- [order] 종료 -> [보안] 정리(복귀)
+[findStock()]  비즈니스만(Pointcut에 없어 미적용)
+```
+- 보안(바깥)→로그(안쪽)→비즈니스→로그→보안 순으로 양파 껍질처럼 돈다. **프록시는 1개**, 어드바이저만 2개. ✅
+  순서는 등록 순서. Pointcut은 NameMatchMethodPointcut(이름 매칭)으로도 만들었다(AspectJ 전용 아님).
+
 ---
 
 ## 3. 자기 점검
@@ -146,6 +180,14 @@ pf.addAdvisor(advisor);                                     // addAdvice(전부)
 - **Q. Pointcut, Advice, Advisor는 각각 무엇인가?**
   - 내 답: Pointcut="어디에"(메서드 필터, 실무 표준 AspectJExpressionPointcut), Advice="무엇을"(부가 로직),
     Advisor=Pointcut+Advice(한 쌍). addAdvice는 전체 적용, addAdvisor는 Pointcut으로 조건부 적용.
+
+- **Q. Pointcut의 내부 구조는? AspectJ만 있나?**
+  - 내 답: Pointcut = ClassFilter("어느 클래스") + MethodMatcher("어느 메서드") 2단 필터. 둘 다 맞아야 적용된다.
+    실무 표준은 AspectJExpressionPointcut이지만, 이름만 매칭하는 NameMatchMethodPointcut 등 다른 구현도 있다.
+
+- **Q. 한 빈에 여러 AOP를 걸면 프록시가 여러 개 생기나? 순서는?**
+  - 내 답: 아니다. 프록시는 1개고, 그 안에 어드바이저 N개를 체인으로 둔다. 등록 순서(또는 @Order)대로
+    바깥→안쪽 진입, 안쪽→바깥 복귀(양파 껍질). 각 어드바이스의 proceed()가 다음으로 이어지고 마지막이 진짜 메서드.
 
 - **Q. invocation.proceed()는 무슨 역할인가?**
   - 내 답: 진짜 메서드(또는 다음 어드바이스)를 호출하는 지점. 이 앞뒤를 감싸 부가 기능을 넣는다. 여러
