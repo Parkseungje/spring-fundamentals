@@ -17,6 +17,8 @@
 - **행 뻥튀기**: 1:N 조인 시 '1'쪽 행이 'N' 개수만큼 중복되는 현상(DISTINCT로 제거).
 - **중간(조인) 테이블**: 다대다(N:M)를 1:N+N:1로 풀기 위해 (A,B) 쌍을 저장하는 테이블.
 - **UNION / UNION ALL**: 두 조회 결과를 '세로로'(행을 이어) 합치는 집합 연산. UNION=중복 제거, UNION ALL=중복 유지. (JOIN=가로 결합과 대비)
+- **GROUP BY / 집계 함수**: 같은 값끼리 행을 묶어 그룹마다 집계(COUNT/SUM/AVG/MAX/MIN)하는 것.
+- **HAVING**: 그룹으로 묶은 뒤 그 집계 결과(그룹)를 거르는 필터. (WHERE는 묶기 전 개별 행을 거름)
 
 한 줄 그림: **정규화로 정보가 여러 테이블에 나뉘면, JOIN으로 다시 합친다. INNER=양쪽 매칭만(교집합),
 LEFT=왼쪽 전부(없으면 NULL). 'LEFT + WHERE NULL'로 매칭 안 되는 행을 찾는다. JOIN의 본질은 '카테시안
@@ -110,6 +112,44 @@ select e.name emp, d.name dept from department d left join employee e on e.dept_
 
 > ★ 정리 — JOIN으로 풀 수 없는 게 UNION이다. "여러 테이블의 정보를 한 행에 붙이고 싶다"=JOIN(가로),
 > "여러 조회 결과를 한 목록으로 쌓고 싶다"=UNION(세로). 둘은 보완 관계지 대체 관계가 아니다.
+
+### GROUP BY — 그룹별로 묶어 집계하기 (JOIN과 자주 결합)
+지금까지는 행을 '합치고 거르는' 것이었다. GROUP BY는 한 발 더 나가 **같은 값끼리 행을 묶어, 그룹마다 하나의
+집계값을 낸다.** "부서별 직원 수", "부서별 평균 연봉" 같은 통계가 전형적이다.
+- **집계 함수**: `COUNT`(개수), `SUM`(합), `AVG`(평균), `MAX`/`MIN`(최대/최소).
+- **GROUP BY 컬럼**: 그 컬럼의 같은 값을 한 그룹으로 묶는다. 결과는 '그룹당 한 행'이 된다.
+```sql
+select dept_id, count(*) cnt from employee group by dept_id;
+-- dept_id가 같은 직원끼리 묶어 그룹마다 인원수를 센다
+```
+- 실측(employee 기준): 개발(dept 1)=2, 영업(dept 2)=1, 무소속(NULL)=1. → 5명이 3그룹으로 묶여 3행이 된다.
+
+#### JOIN + GROUP BY — "부서 '이름'별 직원 수"
+dept_id(숫자) 말고 부서 '이름'으로 집계하려면 department와 **JOIN한 뒤 묶는다.**
+```sql
+select d.name dept, count(e.id) cnt
+from department d
+left join employee e on e.dept_id = d.id
+group by d.name;
+```
+- LEFT JOIN을 쓰면 **직원이 0명인 부서(인사)도 결과에 포함**된다(INNER면 빠진다).
+- ★ 함정 — `count(*)` vs `count(컬럼)`: LEFT JOIN에서 직원 없는 부서는 'e 쪽이 전부 NULL인 한 행'으로 남는다.
+  `count(*)`는 그 NULL 행도 1로 세어 **인사가 1로** 잘못 나온다. 직원 수를 정확히 세려면 **`count(e.id)`** 처럼
+  '직원 컬럼'을 세야 한다(NULL은 안 셈) → 인사=0. (실측: 개발 2, 영업 1, 인사 0)
+
+#### WHERE vs HAVING — 거르는 시점이 다르다
+- **WHERE**: 그룹으로 **묶기 전**, 개별 행을 거른다.
+- **HAVING**: 그룹으로 **묶은 뒤**, 집계 결과(그룹)를 거른다. 집계 함수 조건은 HAVING에만 쓸 수 있다.
+```sql
+select d.name dept, count(e.id) cnt from department d
+left join employee e on e.dept_id = d.id
+group by d.name having count(e.id) >= 2;   -- 직원 2명 이상인 부서만
+```
+- 실측: 개발(2)만 남는다. (WHERE에는 `count(...) >= 2`를 쓸 수 없다 — 아직 묶기 전이라 집계값이 없음.)
+- 실행 순서로 외우면 쉽다: **FROM/JOIN → WHERE(행 필터) → GROUP BY(묶기) → HAVING(그룹 필터) → SELECT → ORDER BY.**
+
+> ★ JPA 연결 — JPQL에도 `group by` / `having` / `count` 등이 그대로 있고, 복잡한 통계는 스프링 데이터 JPA의
+> `@Query`나 QueryDSL로 작성한다. 집계의 SQL 개념은 여기서 그대로 쓰인다.
 
 ---
 
@@ -284,6 +324,23 @@ UNION ALL (중복 유지):
 
 → 박무소속(dept NULL)과 인사(emp NULL)가 **둘 다** 보인다 = FULL OUTER 효과.
 
+### ⑩ GROUP BY — 그룹별 집계
+`department LEFT JOIN employee` 후 부서 이름으로 묶어 `count(e.id)`로 인원수를 센다.
+
+| dept | cnt | 설명 |
+|---|---|---|
+| 개발 | 2 | 김개발·최개발 |
+| 영업 | 1 | 이영업 |
+| 인사 | 0 | 직원 없음(LEFT라 포함, count(e.id)라 NULL은 0) |
+
+여기에 `HAVING count(e.id) >= 2`를 걸면 → 그룹을 거른다:
+
+| dept | cnt |
+|---|---|
+| 개발 | 2 |
+
+→ '개발'만 남는다(직원 2명 이상). WHERE가 아니라 HAVING이어야 집계 조건을 걸 수 있다.
+
 ---
 
 ## 2. 실습으로 확인하기
@@ -348,6 +405,15 @@ UNION ALL (중복 유지):
 - **Q. 1:N 조인에서 행이 중복되는 이유와 해결은?**
   - 내 답: 부서(1)에 직원(N)이 매달리면 부서가 직원 수만큼 중복된다(개발 직원 2명이면 '개발'이 2번).
     부서 목록만 원하면 DISTINCT로 제거. 이것이 JPA 컬렉션 페치 조인에서 엔티티가 중복되는 문제의 뿌리(distinct로 해결, PART 14).
+
+- **Q. GROUP BY는 무엇이고, WHERE와 HAVING의 차이는?**
+  - 내 답: 같은 값끼리 행을 묶어 그룹마다 집계(count/sum/avg 등)한다. WHERE는 묶기 전 개별 행을 거르고,
+    HAVING은 묶은 뒤 그룹(집계 결과)을 거른다. 집계 함수 조건(count>=2 등)은 HAVING에만 쓸 수 있다.
+    실행 순서: FROM/JOIN → WHERE → GROUP BY → HAVING → SELECT → ORDER BY.
+
+- **Q. JOIN + GROUP BY로 부서별 직원 수를 셀 때 count(*)와 count(e.id) 차이는?**
+  - 내 답: LEFT JOIN에서 직원 0명 부서는 e가 전부 NULL인 한 행으로 남는다. count(*)는 그 행도 1로 세어
+    틀리고(인사=1), count(e.id)는 NULL을 안 세서 정확히 0이 나온다(인사=0).
 
 - **Q. JOIN과 UNION의 차이는?**
   - 내 답: JOIN은 두 테이블을 '가로로'(한 행에 양쪽 컬럼) 합치고, UNION은 두 조회 결과를 '세로로'(행을 이어)

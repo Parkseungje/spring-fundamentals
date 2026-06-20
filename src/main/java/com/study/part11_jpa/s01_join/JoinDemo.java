@@ -107,6 +107,26 @@ public class JoinDemo {
                     "union " +
                     "select e.name emp, d.name dept from department d left join employee e on e.dept_id = d.id " +
                     "order by emp nulls last");
+
+            // ── (추가6) GROUP BY + 집계 함수 ──
+            // GROUP BY는 '같은 값끼리 행을 묶어' 그룹마다 집계(count/sum/avg/max/min)한다. 여기선 dept_id로
+            // 묶어 '부서별 직원 수'를 센다. (현재 employee: 개발 2명, 영업 1명, 무소속(null) 1명)
+            System.out.println("== GROUP BY (부서id별 직원 수) ==");
+            print(st, "select dept_id, count(*) cnt from employee group by dept_id order by dept_id nulls last");
+
+            // ── (추가7) JOIN + GROUP BY ──
+            // 부서 '이름'별 직원 수를 보려면 department와 JOIN한 뒤 부서로 묶는다. LEFT JOIN을 쓰고 count(e.id)로
+            // 세면 직원 0명인 부서(인사)도 0으로 나온다. (주의: count(*)는 LEFT의 NULL 행도 1로 세어 인사가 1이 됨
+            //  -> '직원 수'를 정확히 세려면 count(e.id)처럼 '직원 컬럼'을 센다.)
+            System.out.println("== JOIN + GROUP BY (부서 이름별 직원 수, 직원 0명 부서 포함) ==");
+            print(st, "select d.name dept, count(e.id) cnt from department d " +
+                    "left join employee e on e.dept_id = d.id group by d.name order by cnt desc");
+
+            // ── (추가8) HAVING (그룹 집계 결과 필터) ──
+            // WHERE는 '묶기 전 개별 행'을 거르고, HAVING은 '묶은 뒤 그룹'을 거른다. "직원 2명 이상인 부서만".
+            System.out.println("== HAVING (직원 2명 이상인 부서만) ==");
+            print(st, "select d.name dept, count(e.id) cnt from department d " +
+                    "left join employee e on e.dept_id = d.id group by d.name having count(e.id) >= 2");
         }
 
         System.out.println("=> 정규화로 흩어진 정보를 JOIN으로 합친다. INNER=교집합(매칭만), LEFT=왼쪽 전부(없으면 NULL).");
