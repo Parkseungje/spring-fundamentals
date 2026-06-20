@@ -71,6 +71,7 @@ public void init() {
 빈 생성 → DI → @PostConstruct → [프록시 교체] → ContextRefreshedEvent → ApplicationReadyEvent → ApplicationRunner
               └ 프록시 '前'(함정, false)        └────────── 프록시 '後'(해결, true) ──────────┘
 ```
+
 | 시점 | 프록시 준비? | @Transactional |
 |---|---|---|
 | 생성자 | X | (의존성도 미완) |
