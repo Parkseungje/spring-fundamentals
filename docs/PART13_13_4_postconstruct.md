@@ -65,6 +65,30 @@ public void init() {
   있다(스프링은 의존 빈을 먼저 생성·초기화한 뒤 나를 만든다). 그 빈을 거치면 프록시를 타므로 트랜잭션 적용(true).
 - 결국 13.3과 동일한 해법 — "프록시를 거치게 만든다".
 
+### 1-3b. 실행 시점 타임라인 — 무엇이 언제 실행되나
+함정(@PostConstruct)과 해결(이벤트/Runner)이 '시간축'에서 어디에 있는지 한눈에 보자.
+```
+빈 생성 → DI → @PostConstruct → [프록시 교체] → ContextRefreshedEvent → ApplicationReadyEvent → ApplicationRunner
+              └ 프록시 '前'(함정, false)        └────────── 프록시 '後'(해결, true) ──────────┘
+```
+| 시점 | 프록시 준비? | @Transactional |
+|---|---|---|
+| 생성자 | X | (의존성도 미완) |
+| @PostConstruct | X (아직 교체 전) | ❌ 무시(함정) |
+| ContextRefreshedEvent | O | ✅ 적용 |
+| ApplicationReadyEvent | O | ✅ 적용 |
+| ApplicationRunner / CommandLineRunner | O | ✅ 적용 |
+
+#### ContextRefreshedEvent vs ApplicationReadyEvent
+둘 다 "프록시 완성 후"지만 시점이 다르다.
+- **ContextRefreshedEvent**: ApplicationContext refresh 완료(모든 빈 생성·프록시 교체 끝). 순수 스프링 컨텍스트에서도 발행돼서 데모에 쓰기 좋다.
+- **ApplicationReadyEvent**: 그보다 **더 늦은** Spring Boot 기동 완전 완료(자동 설정·서버 기동까지 끝나 요청 받을 준비). Boot 앱의 '시작 시 1회 작업'은 보통 이걸 쓴다.
+- 그래서 이 단원 데모는 ContextRefreshedEvent(plain 컨텍스트), 실무 Boot는 ApplicationReadyEvent를 쓴다.
+
+> ★ 형제 함정 — @PostConstruct만이 아니다. `InitializingBean.afterPropertiesSet()`, `@Bean(initMethod=...)`도
+> 같은 '초기화 콜백'이라 프록시 교체 '前'에 실행된다 → 거기서 @Transactional을 기대하면 똑같이 안 걸린다.
+> 또 @PostConstruct 안에서 `this.txMethod()`를 부르면 '시점 前'(13.4) + '내부 호출'(13.3) 두 함정이 겹친다.
+
 ### 1-4. 정리 — PART 13의 함정 두 개를 관통하는 원리
 13.3·13.4는 모두 "@Transactional은 프록시가 처리한다"는 사실에서 나온다. 프록시를 안 거치면(this 우회) 또는
 아직 프록시가 없으면(@PostConstruct 시점) 무조건 무시된다. 해결의 본질도 같다 — **"프록시를 거치는 경로/
@@ -120,3 +144,15 @@ public void init() {
 - **Q. @PostConstruct는 왜 생성자 대신 쓰나?**
   - 내 답: 생성자 시점엔 의존성 주입이 아직 안 끝났을 수 있다. @PostConstruct는 DI 완료 직후 실행되므로
     주입된 의존성을 안전하게 사용해 초기화할 수 있다.
+
+- **Q. 실행 시점 순서(@PostConstruct vs 이벤트 vs Runner)는?**
+  - 내 답: 생성자→DI→@PostConstruct→(프록시 교체)→ContextRefreshedEvent→ApplicationReadyEvent→ApplicationRunner.
+    @PostConstruct만 프록시 '前'이라 @Transactional이 안 걸리고, 그 뒤 시점들은 프록시 '後'라 정상 적용된다.
+
+- **Q. ContextRefreshedEvent와 ApplicationReadyEvent의 차이는?**
+  - 내 답: 둘 다 프록시 완성 후지만, ContextRefreshedEvent는 컨텍스트 refresh 완료(빈·프록시 준비), 
+    ApplicationReadyEvent는 그보다 늦은 Boot 기동 완전 완료(요청 받을 준비까지). 실무 Boot는 보통 후자를 쓴다.
+
+- **Q. @PostConstruct 말고 같은 함정을 가진 콜백은?**
+  - 내 답: InitializingBean.afterPropertiesSet(), @Bean(initMethod=...)도 초기화 콜백이라 프록시 교체 前 실행 →
+    @Transactional이 무시된다. @PostConstruct에서 this.txMethod()면 13.3 내부 호출 함정까지 겹친다.
