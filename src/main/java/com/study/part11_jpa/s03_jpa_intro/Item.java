@@ -36,6 +36,12 @@ public class Item {
     public String getName() { return name; }
     public int getPrice() { return price; }
 
+    // 변경 감지(Dirty Checking) 데모용 — 영속 상태 엔티티의 이 값을 바꾸면, save()를 호출하지 않아도
+    // 트랜잭션 커밋(또는 flush) 시 JPA가 변경을 감지해 update SQL을 자동 생성한다(11.3에서 확인).
+    public void changePrice(int price) {
+        this.price = price;
+    }
+
     @Override
     public String toString() {
         return "Item{id=" + id + ", name=" + name + ", price=" + price + "}";

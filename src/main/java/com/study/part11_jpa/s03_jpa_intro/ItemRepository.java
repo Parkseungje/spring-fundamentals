@@ -1,6 +1,8 @@
 package com.study.part11_jpa.s03_jpa_intro;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -21,4 +23,11 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
 
     // "where price >= ? order by price" 도 이름 규칙으로 자동 생성.
     List<Item> findByPriceGreaterThanEqualOrderByPriceAsc(int price);
+
+    // ★ JPQL + @Query: 메서드 이름 규칙으로 표현하기 복잡한 쿼리는 JPQL을 직접 적는다.
+    // JPQL은 '테이블'이 아니라 '엔티티(Item)와 그 필드(name/price)'를 대상으로 쓰는 객체 지향 쿼리다.
+    //   (SQL: from item where ... / JPQL: from Item i where i.name ... -> JPA가 이를 실제 SQL로 번역)
+    // 이름 못 외울 만큼 조건이 복잡하거나, 일부 컬럼만 뽑는 등 쿼리 메서드로 부족할 때 쓴다.
+    @Query("select i from Item i where i.name = :name and i.price >= :minPrice")
+    List<Item> searchByNameAndMinPrice(@Param("name") String name, @Param("minPrice") int minPrice);
 }
