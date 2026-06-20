@@ -89,6 +89,7 @@ public class Pointcuts {
 execution( [접근제어자] 반환타입 [패키지.클래스.]메서드명(파라미터) )
            예: public     *        com.study..*Service.  find*    (..)
 ```
+
 | 자리 | 의미 | 예 |
 |---|---|---|
 | 접근제어자 | 생략 가능(보통 생략) | `public` |
@@ -102,6 +103,7 @@ execution( [접근제어자] 반환타입 [패키지.클래스.]메서드명(파
 
 #### execution 외의 주요 지정자
 포인트컷은 execution만 있는 게 아니다.
+
 | 지정자 | 의미 |
 |---|---|
 | `execution(...)` | 메서드 시그니처 패턴(가장 많이 씀) |
