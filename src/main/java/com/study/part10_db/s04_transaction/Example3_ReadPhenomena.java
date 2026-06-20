@@ -9,9 +9,11 @@ import java.sql.SQLException;
 /**
  * [10.4 - 예시3] 격리 수준이 막아주는 '읽기 이상현상' 3종 재현 — Non-Repeatable Read / Phantom Read.
  *
- * Example2는 Dirty Read(미커밋 값 읽기)를 다뤘다(정확히는 READ COMMITTED가 그것을 막는 것을 보였다).
- * 여기서는 나머지 두 이상현상을, '한 트랜잭션 안에서 같은 읽기를 두 번' 하는 사이 다른 트랜잭션이 끼어드는
- * 시나리오로 재현한다.
+ * 이 예제는 읽기 이상현상 3종을 모두 재현한다(같은 데이터를 읽는 사이 다른 트랜잭션이 끼어드는 시나리오).
+ *
+ *  (D) Dirty Read(더티 리드): 다른 트랜잭션이 '아직 커밋도 안 한' 값을 읽는다. 그 트랜잭션이 롤백하면
+ *      존재한 적 없는 값을 읽은 꼴. -> READ_UNCOMMITTED에서만 발생(READ_COMMITTED부터 방지).
+ *      (Example2_CommitVisibility는 READ COMMITTED가 이걸 '막는' 모습을 보였고, 여기 (D)는 '발생하는' 모습.)
  *
  *  (A) Non-Repeatable Read(반복 불가능 읽기): 같은 '행'을 두 번 읽었는데, 그 사이 다른 트랜잭션이 그 행을
  *      수정·커밋해서 두 번째 값이 달라진다. -> READ COMMITTED에서는 발생. REPEATABLE READ부터 방지.
@@ -42,9 +44,50 @@ public class Example3_ReadPhenomena {
         //   TRANSACTION_SERIALIZABLE(8)     : 완전 직렬화. Phantom까지 모두 방지 — 가장 강하고 가장 느림.
         // 아래는 같은 시나리오를 (A)READ_COMMITTED와 (B)REPEATABLE_READ로 각각 돌려, 격리 수준이 올라가면
         // Non-Repeatable Read가 막히는 것을 대조한다. (Connection.setTransactionIsolation(상수)로 적용)
+        dirtyRead();
         nonRepeatableRead(Connection.TRANSACTION_READ_COMMITTED, "(A) READ COMMITTED");
         nonRepeatableRead(Connection.TRANSACTION_REPEATABLE_READ, "(B) REPEATABLE READ");
         phantomRead();
+    }
+
+    // (D) Dirty Read: 다른 트랜잭션이 '아직 커밋 안 한' 값을 읽는다. 그 트랜잭션이 롤백하면, 나는
+    // '존재한 적 없는 값(환상의 값)'을 읽은 꼴이 된다. 가장 약한 격리 READ_UNCOMMITTED에서만 발생한다.
+    // (READ_COMMITTED 이상에서는 막힌다 -> Example2_CommitVisibility가 그 '막히는' 경우를 보여줬다.)
+    static void dirtyRead() throws Exception {
+        setUp();
+        System.out.println("== (D) READ UNCOMMITTED — Dirty Read 시도 ==");
+        try (Connection reader = DriverManager.getConnection(URL, "sa", "");
+             Connection writer = DriverManager.getConnection(URL, "sa", "")) {
+
+            reader.setAutoCommit(false);
+            // READ_UNCOMMITTED(1): 다른 트랜잭션이 커밋하지 않은 변경까지 읽도록 허용(가장 약한 격리).
+            reader.setTransactionIsolation(Connection.TRANSACTION_READ_UNCOMMITTED);
+
+            // writer가 A를 9999로 바꾸되 '커밋하지 않는다'(트랜잭션 진행 중).
+            writer.setAutoCommit(false);
+            try (PreparedStatement ps = writer.prepareStatement("update accounts set balance = 9999 where id = 'A'")) {
+                ps.executeUpdate();
+            }
+            System.out.println("  writer: A를 9999로 수정(아직 commit 안 함)");
+
+            // reader가 지금 읽으면? READ_UNCOMMITTED라 '커밋 안 된 9999'를 본다(= Dirty Read).
+            int dirty = balance(reader, "A");
+            System.out.println("  reader 읽기(미커밋): A = " + dirty + "   <- 커밋도 안 된 값을 읽음!");
+
+            // writer가 롤백한다 -> 9999는 '없던 일'이 된다.
+            writer.rollback();
+            System.out.println("  writer: rollback! -> 9999는 존재한 적 없는 값이 됨");
+
+            // reader가 다시 읽으면 원래 값(1000). reader는 방금 '환상의 값 9999'를 본 셈이다.
+            int real = balance(reader, "A");
+            reader.commit();
+            System.out.println("  reader 재읽기(롤백 후): A = " + real);
+            if (dirty == 9999 && real != 9999) {
+                System.out.println("  => 롤백되어 사라질 9999를 읽었다 = Dirty Read 발생!\n");
+            } else {
+                System.out.println("  => 이 환경에선 Dirty Read가 재현되지 않았다(드라이버/버전에 따라 다를 수 있음)\n");
+            }
+        }
     }
 
     // (A)/(B) 같은 행을 두 번 읽는 사이 다른 트랜잭션이 수정·커밋 -> 격리 수준에 따라 결과가 갈린다.

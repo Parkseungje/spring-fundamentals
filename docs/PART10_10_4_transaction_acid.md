@@ -151,7 +151,8 @@ conn.commit();                        // -> A 출금만 반영
 - `Example5_Consistency` (C 일관성) — (A) CHECK(balance≥0) 위반 거부 / (B) 합계 불변식 유지.
 - `Example2_CommitVisibility` (I 격리성) — "커밋 전 변경은 안 보이고, 커밋 후 보인다"(Dirty Read 방지).
 - `Example6_Durability` (D 지속성) — 파일 H2로 재기동 후 커밋분 생존/미커밋 소멸.
-- `Example3_ReadPhenomena` — 격리 수준별 이상현상(Non-Repeatable/Phantom) 재현.
+- `Example3_ReadPhenomena` — 격리 수준별 이상현상 3종 재현((D) READ UNCOMMITTED Dirty Read / (A) READ
+  COMMITTED Non-Repeatable / (B) REPEATABLE READ 방지 / (C) Phantom).
 - `Example4_Savepoint` — 저장점까지만 부분 롤백(앞 작업 유지).
 
 ### 실행
@@ -176,6 +177,7 @@ conn.commit();                        // -> A 출금만 반영
 ```
 Example3 (이상현상) 실측:
 ```
+(D) READ UNCOMMITTED: 미커밋 9999 읽음 -> writer 롤백 -> 재읽기 1000   = Dirty Read 발생!
 (A) READ COMMITTED : 1차=1000 -> (writer 2000 커밋) -> 2차=2000   = Non-Repeatable Read 발생!
 (B) REPEATABLE READ: 1차=1000 -> (writer 2000 커밋) -> 2차=1000   = 반복 가능(막아줌)
 (C) READ COMMITTED : 행수 2 -> (writer C 삽입 커밋) -> 행수 3      = Phantom Read 발생!
