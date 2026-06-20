@@ -64,10 +64,52 @@ public void transfer(Long fromId, Long toId, int amount) {
 ### ★ @Transactional의 5가지 함정
 1. **private 메서드 ❌** — 프록시가 외부 호출만 가로채므로 private에는 트랜잭션이 안 걸린다(public에 붙여야).
 2. **Self-invocation** — 같은 클래스 안에서 `this.inner()`로 호출하면 프록시를 안 거쳐 트랜잭션이 안 걸린다.
-   (다른 빈을 통해 호출해야 프록시를 탄다.)
+   (다른 빈을 통해 호출해야 프록시를 탄다.) → **상세 실증은 PART 13.3**. (짝 함정: @PostConstruct는 13.4)
 3. **기본 롤백은 RuntimeException(unchecked)만** — 체크 예외는 롤백 안 됨. `@Transactional(rollbackFor = Exception.class)`로 지정.
 4. **전파 옵션** — `REQUIRED`(기본: 있으면 참여, 없으면 새로), `REQUIRES_NEW`(항상 새 트랜잭션), `NESTED`(중첩/Savepoint).
+   → **상세 실증은 PART 13.5**(내부 롤백 시 UnexpectedRollbackException 함정 포함).
 5. **`readOnly = true`** — 읽기 전용 메서드에 붙이면 영속성 컨텍스트 최적화(플러시 생략 등)로 성능 ↑.
+
+### @Transactional 주요 속성 한눈에
+함정 5개에 흩어진 옵션을 한 표로 정리한다(실무 레퍼런스).
+
+| 속성 | 의미 | 기본값 | 비고 |
+|---|---|---|---|
+| `propagation` | 진행 중 트랜잭션이 있을 때 동작 | REQUIRED | REQUIRES_NEW/NESTED 등 (PART 13.5) |
+| `isolation` | 격리 수준 | DEFAULT(DB 기본) | READ_COMMITTED/REPEATABLE_READ 등 (PART 13.6, 10.4) |
+| `readOnly` | 읽기 전용 최적화 | false | 조회 메서드는 true 권장(플러시 생략·스냅샷 보관 안 함) |
+| `timeout` | 트랜잭션 제한 시간(초) | -1(무제한) | 초과 시 롤백 + 예외. 오래 걸리는 트랜잭션 방어 |
+| `rollbackFor` | 추가로 롤백할 예외 | (RuntimeException/Error) | 예: `rollbackFor = Exception.class`(체크 예외도 롤백) |
+| `noRollbackFor` | 롤백 '제외'할 예외 | 없음 | 예: 특정 RuntimeException은 커밋하고 싶을 때 |
+
+- 롤백 정책 정리: **기본은 unchecked(RuntimeException/Error)만 롤백**. `rollbackFor`로 대상을 넓히고,
+  `noRollbackFor`로 특정 예외를 롤백에서 빼낸다.
+
+### 클래스 레벨 @Transactional
+어노테이션은 메서드뿐 아니라 **클래스에도** 붙일 수 있다.
+```java
+@Service
+@Transactional(readOnly = true)        // 클래스 기본: 모든 public 메서드에 적용
+public class AccountService {
+    public int balanceOf(Long id) { ... }          // readOnly = true (클래스 설정 상속)
+
+    @Transactional                                  // 메서드 레벨이 '우선' -> 쓰기 가능(readOnly=false)
+    public void transfer(...) { ... }
+}
+```
+- 클래스에 붙이면 그 안 **모든 public 메서드**에 적용되고, **메서드 레벨 설정이 우선**한다.
+- 흔한 패턴: 클래스에 `@Transactional(readOnly = true)`로 기본을 읽기 전용으로 깔고, 쓰기 메서드에만
+  `@Transactional`을 따로 붙여 덮어쓴다(조회 최적화 + 쓰기는 명시).
+- (private/내부 호출엔 여전히 안 걸린다 — 클래스에 붙여도 프록시 원리는 동일.)
+
+### ★ 트랜잭션 경계 = 영속성 컨텍스트 경계
+@Transactional이 단순히 commit/rollback만 자동화하는 게 아니다. **트랜잭션의 시작~끝이 곧 영속성 컨텍스트의
+생존 범위**다(11.3). 그래서 변경 감지·1차 캐시·지연 로딩이 모두 이 안에서만 동작한다.
+```
+@Transactional 시작 ──► [영속성 컨텍스트 생성] ── 조회/변경 ── [커밋 시 변경 감지로 UPDATE flush] ──► 끝(컨텍스트 닫힘)
+```
+- 그래서 변경 감지(위 transfer의 withdraw/deposit이 save 없이 반영)가 **커밋 시점**에 일어난다.
+- 트랜잭션이 끝나면 컨텍스트가 닫혀, 그 밖에서 지연 로딩을 시도하면 예외가 난다(상세는 PART 14).
 
 ### 집약
 PART 8 OOP 원칙(템플릿 메소드/전략/OCP/DI) + PART 10 PlatformTransactionManager + 프록시(AOP) →
@@ -114,3 +156,16 @@ PART 8 OOP 원칙(템플릿 메소드/전략/OCP/DI) + PART 10 PlatformTransacti
 - **Q. PlatformTransactionManager와 @Transactional의 관계는?**
   - 내 답: @Transactional은 내부적으로 PlatformTransactionManager(JpaTransactionManager 등)를 사용해 트랜잭션을
     시작/커밋/롤백한다. 프록시가 그 호출을 대신해 준다. (PART 10 DataSource와 같은 인터페이스 추상화 사상.)
+
+- **Q. @Transactional 주요 속성을 들면? (rollbackFor vs noRollbackFor, timeout)**
+  - 내 답: propagation/isolation/readOnly/timeout/rollbackFor/noRollbackFor. 기본은 unchecked만 롤백 →
+    rollbackFor로 대상 확대(체크 예외 포함), noRollbackFor로 특정 예외 제외. timeout은 제한 시간(초) 초과 시 롤백.
+    readOnly=true는 조회 최적화(플러시 생략).
+
+- **Q. 클래스에 @Transactional을 붙이면?**
+  - 내 답: 그 안 모든 public 메서드에 적용되고, 메서드 레벨 설정이 우선한다. 흔히 클래스에 readOnly=true를
+    깔고 쓰기 메서드만 @Transactional로 덮어쓴다. (private/내부 호출엔 여전히 안 걸림.)
+
+- **Q. 변경 감지가 왜 트랜잭션 안에서만 동작하나?**
+  - 내 답: 트랜잭션 경계 = 영속성 컨텍스트 생존 범위라서. @Transactional이 시작될 때 컨텍스트가 만들어지고,
+    커밋 시점에 변경 감지로 UPDATE가 flush된다. 트랜잭션이 끝나면 컨텍스트가 닫혀 지연 로딩도 불가(PART 14).
