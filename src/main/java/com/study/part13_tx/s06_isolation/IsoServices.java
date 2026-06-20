@@ -64,4 +64,44 @@ public class IsoServices {
             inner.newRequiresNew(); // 새 트랜잭션 -> 자기 격리(SERIALIZABLE)
         }
     }
+
+    // ── (4) readOnly도 격리와 '같은 규칙' — 트랜잭션 시작 시점 속성이라 참여 시 외부 따름 ──
+    public static class ReadOnlyInner {
+        // 내부는 readOnly=true를 '선언'한다. 하지만 참여(REQUIRED)면 외부의 readOnly(false)를 따른다.
+        @Transactional(propagation = Propagation.REQUIRED, readOnly = true)
+        public void participateRequired() {
+            boolean ro = org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isCurrentTransactionReadOnly();
+            System.out.println("    inner(REQUIRED, 선언=readOnly true) 실제 readOnly = " + ro
+                    + "   <- 외부(쓰기)에 참여하면 선언한 readOnly가 무시되고 외부를 따른다");
+        }
+
+        // REQUIRES_NEW면 새 트랜잭션이라 자기 readOnly가 적용된다.
+        @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+        public void newRequiresNew() {
+            boolean ro = org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isCurrentTransactionReadOnly();
+            System.out.println("    inner(REQUIRES_NEW, 선언=readOnly true) 실제 readOnly = " + ro
+                    + "   <- 새 트랜잭션이라 선언한 readOnly가 그대로 적용된다");
+        }
+    }
+
+    public static class ReadOnlyOuter {
+        private final ReadOnlyInner inner;
+        public ReadOnlyOuter(ReadOnlyInner inner) { this.inner = inner; }
+
+        @Transactional // 외부는 쓰기 트랜잭션(readOnly=false 기본)
+        public void callParticipating() {
+            System.out.println("    outer readOnly = " + org.springframework.transaction.support
+                    .TransactionSynchronizationManager.isCurrentTransactionReadOnly() + " (쓰기 트랜잭션으로 시작)");
+            inner.participateRequired();
+        }
+
+        @Transactional
+        public void callNew() {
+            System.out.println("    outer readOnly = " + org.springframework.transaction.support
+                    .TransactionSynchronizationManager.isCurrentTransactionReadOnly() + " (쓰기 트랜잭션으로 시작)");
+            inner.newRequiresNew();
+        }
+    }
 }
