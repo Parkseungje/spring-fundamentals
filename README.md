@@ -47,7 +47,7 @@ curl localhost:8080/actuator/mappings
 - [x] PART 10 DB 접근의 진화 (10.1~10.5 완료, s01~s05 소단원별)
 - [x] PART 11 ORM/JPA와 트랜잭션 추상화 (11.1~11.5 완료, s01~s05 소단원별)
 - [x] PART 12 프록시의 진화와 Spring AOP (12.1~12.11 완료, s01~s11 소단원별)
-- [ ] PART 13 트랜잭션 심화
+- [x] PART 13 트랜잭션 심화 (13.1~13.6 완료, s01~s06 소단원별)
 - [ ] PART 14 JPA 심화
 - [ ] PART 15~16 데이터베이스 (이론/운영)
 - [ ] PART 17 Spring MVC 내부와 REST API
