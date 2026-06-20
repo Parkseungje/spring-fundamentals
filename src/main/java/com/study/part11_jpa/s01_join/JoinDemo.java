@@ -46,10 +46,48 @@ public class JoinDemo {
             System.out.println("== 부서 없는 직원 (LEFT JOIN + WHERE d.id IS NULL) ==");
             print(st, "select e.name emp from employee e " +
                     "left join department d on e.dept_id = d.id where d.id is null");
+
+            // ── (추가1) CROSS JOIN = 카테시안 곱: JOIN의 본질 ──
+            // JOIN은 사실 "두 테이블의 '모든 행 조합'을 만든 뒤 ON 조건으로 거르는 것"이다. CROSS JOIN은
+            // 그 '거르기 전' 상태 = 모든 조합. 직원3 x 부서2 = 6행이 나온다. 그래서 ON을 빠뜨리면(또는
+            // 잘못 쓰면) 결과가 N x M으로 폭발한다(흔한 사고). INNER JOIN = CROSS JOIN + ON 필터인 셈.
+            System.out.println("== CROSS JOIN (카테시안 곱: 모든 조합 = 직원3 x 부서2 = 6행) ==");
+            print(st, "select e.name emp, d.name dept from employee e cross join department d order by e.id, d.id");
+
+            // ── (추가2) 1:N JOIN의 '행 뻥튀기' + DISTINCT ──
+            // 부서(1)에 직원(N)이 매달린 1:N 관계를 '부서 기준'으로 조인하면, 직원 수만큼 부서 행이 중복된다.
+            // 개발 부서에 직원 2명을 넣어 두고 부서를 직원과 조인하면 '개발'이 2번 나온다 -> 부서 목록만
+            // 원하면 중복이 생긴다. DISTINCT로 제거할 수 있다. (이것이 PART 14 JPA 컬렉션 페치 조인에서
+            // 엔티티가 중복되는 문제의 뿌리 — 거기선 distinct로 푼다.)
+            st.execute("insert into employee values (4,'최개발',1)"); // 개발 부서에 2번째 직원 추가
+            System.out.println("== 1:N JOIN 행 뻥튀기 (부서를 직원과 조인 -> 개발이 직원 수만큼 중복) ==");
+            print(st, "select d.name dept, e.name emp from department d " +
+                    "join employee e on e.dept_id = d.id order by d.id, e.id");
+            System.out.println("== DISTINCT로 '부서 목록' 중복 제거 ==");
+            print(st, "select distinct d.name dept from department d " +
+                    "join employee e on e.dept_id = d.id order by d.name");
+
+            // ── (추가3) N:M(다대다)과 중간(조인) 테이블 ──
+            // 학생과 과목은 다대다(한 학생이 여러 과목, 한 과목에 여러 학생)다. 관계형 DB는 다대다를 직접
+            // 표현 못 해, '중간 테이블(enrollment)'에 (학생, 과목) 쌍을 저장해 1:N + N:1 두 개로 푼다.
+            // 조회는 세 테이블(학생-중간-과목)을 이어서 JOIN한다. (PART 14 JPA @ManyToMany/중간 엔티티의 토대.)
+            st.execute("create table student(id int primary key, name varchar(20))");
+            st.execute("create table course(id int primary key, title varchar(20))");
+            st.execute("create table enrollment(student_id int, course_id int)"); // 중간 테이블
+            st.execute("insert into student values (1,'학생A'),(2,'학생B')");
+            st.execute("insert into course values (10,'자바'),(20,'DB')");
+            // 학생A: 자바+DB, 학생B: 자바 -> 다대다 관계를 쌍으로 저장
+            st.execute("insert into enrollment values (1,10),(1,20),(2,10)");
+            System.out.println("== N:M JOIN (학생-중간(enrollment)-과목 세 테이블 연결) ==");
+            print(st, "select s.name student, c.title course from student s " +
+                    "join enrollment en on en.student_id = s.id " +
+                    "join course c on c.id = en.course_id order by s.id, c.id");
         }
 
         System.out.println("=> 정규화로 흩어진 정보를 JOIN으로 합친다. INNER=교집합(매칭만), LEFT=왼쪽 전부(없으면 NULL).");
         System.out.println("   'LEFT JOIN + WHERE NULL'로 '매칭 안 되는 행(부서 없는 직원)'을 찾는 게 대표 활용.");
+        System.out.println("   JOIN의 본질은 카테시안 곱+ON 필터. 1:N 조인은 행이 뻥튀기되어 DISTINCT가 필요할 수 있고,");
+        System.out.println("   N:M은 중간 테이블로 풀어 세 테이블을 JOIN한다(JPA 연관관계의 토대).");
     }
 
     static void print(Statement st, String sql) throws SQLException {
