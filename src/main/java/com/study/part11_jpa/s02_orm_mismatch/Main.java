@@ -46,10 +46,34 @@ public class Main {
         Member m2 = loadMember(1L);
         System.out.println("  m1.id=" + m1.getId() + ", m2.id=" + m2.getId() + " (DB상 같은 행, 같은 PK)");
         System.out.println("  m1 == m2 ? " + (m1 == m2) + "   <- false! 'new'를 두 번 했으니 다른 인스턴스(객체 식별 != PK)");
+        System.out.println();
+
+        // (C) 탐색(navigation) 미스매치 — '처음 실행한 SQL이 탐색 범위를 결정'한다.
+        // 객체에선 order.getMember().getName()처럼 참조를 자유롭게 타고 들어갈 수 있어야 자연스럽다.
+        // 그러나 raw JDBC에선 '그 SQL이 채워준 만큼만' 객체가 차 있다. 회원을 조회·연결하지 않은 Order는
+        // member가 null이라, 더 깊이 탐색하려는 순간 멈춘다(이 객체 그래프를 어디까지 믿어도 되는지 알 수 없음).
+        System.out.println("(C) 탐색 미스매치 (객체는 자유 탐색, SQL은 JOIN/조회한 만큼만):");
+        Order itemOnly = loadOrderItemOnly(1L); // member는 조회하지 않음
+        System.out.println("  item만 읽은 Order = " + itemOnly);
+        System.out.println("  itemOnly.getMember() = " + itemOnly.getMember() + "   <- null! 이 SQL은 회원을 안 채웠다");
+        System.out.println("  => order.getMember().getName() 처럼 더 타고 들어가려 하면 NullPointerException.");
+        System.out.println("     '어디까지 채워졌나'가 SQL마다 달라, 객체 그래프를 마음껏 신뢰하며 탐색할 수 없다.");
 
         System.out.println();
-        System.out.println("=> 객체(참조/==)와 DB(외래 키/PK)는 패러다임이 다르다. 이 간극을 메우는 코드를 매번 손으로");
-        System.out.println("   쓰는 게 고통 -> ORM이 객체 그래프 조립·동일 PK 객체 관리를 자동화해 메운다(11.3 JPA).");
+        System.out.println("=> 객체(참조/==/자유 탐색)와 DB(외래 키/PK/JOIN 범위)는 패러다임이 다르다. 이 간극을 메우는");
+        System.out.println("   코드를 매번 손으로 쓰는 게 고통 -> ORM이 객체 그래프 조립·동일 PK 관리·지연 로딩으로 메운다(11.3 JPA).");
+    }
+
+    // item만 읽고 member는 채우지 않는다 -> member=null인 '반쪽짜리' 객체 그래프(탐색 한계 재현).
+    static Order loadOrderItemOnly(Long orderId) throws SQLException {
+        try (Connection c = DriverManager.getConnection(URL, "sa", "");
+             var ps = c.prepareStatement("select item from orders where id = ?")) {
+            ps.setLong(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return new Order(orderId, rs.getString("item"), null); // member 미조회 -> null
+            }
+        }
     }
 
     // 외래 키를 객체 참조로 '손으로' 바꿔 객체 그래프를 만든다(ORM이 없으면 이 작업을 매번 해야 한다).
