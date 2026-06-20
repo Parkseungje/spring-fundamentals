@@ -11,7 +11,8 @@
 - **프록시 패턴(Proxy)**: 대상을 감싸 **접근을 제어**하는 패턴(권한 검사·캐싱·지연 로딩).
 - **위임(delegate)**: 감싼 객체가 받은 호출을 안쪽 대상에게 넘기는 것.
 - **쌓기(stacking)**: 감싼 객체를 또 감싸 기능을 누적하는 것. 데코레이터의 전형적 사용법.
-- **GoF 디자인 패턴**: 객체지향 설계의 고전적 패턴 모음. 프록시·데코레이터를 별개 패턴으로 정의한다.
+- **어댑터(Adapter)**: 감싸되 '인터페이스를 변환'하는 패턴(호환 안 되는 다른 인터페이스를 맞춰 연결). 프록시/데코레이터는 인터페이스 유지.
+- **GoF 디자인 패턴**: 객체지향 설계의 고전적 패턴 모음. 프록시·데코레이터·어댑터를 별개 패턴으로 정의한다.
 
 한 줄 그림: **데코레이터와 프록시는 '구조(같은 인터페이스 구현 + 대상 위임)'가 사실상 같다. 다른 건 '의도'
 뿐이다 — 데코레이터는 "기능을 더하려고"(항상 위임 후 결과 가공·쌓기), 프록시는 "접근을 통제하려고"(호출을
@@ -81,7 +82,33 @@ class AccessControlProxy implements TextSource {
 > 경우가 많다(Spring AOP의 프록시는 사실상 기능 추가=데코레이터적 용도가 많다). 시험·면접에서는 "구조는
 > 같고 의도로 구분한다"는 점이 정답이다.
 
-### 1-5. 자바 I/O = 데코레이터의 대표 사례 (PART 6과 연결)
+### 1-5. 데코레이터는 왜 존재하나 — 상속과의 비교
+"기능 추가면 그냥 상속하면 되지 않나?"에 대한 답이 데코레이터의 존재 이유다.
+- **상속으로 조합하면 클래스 폭발**: 대문자, 괄호, 버퍼... 기능을 조합하려면 `UpperBracket`, `UpperBuffer`,
+  `UpperBracketBuffer`... 조합마다 클래스를 만들어야 한다(조합 폭발). 게다가 **컴파일 타임에 고정**된다.
+- **데코레이터는 런타임에 동적 조합**: `new Bracket(new Upper(plain))`처럼 **겹치는 순서·종류를 실행 중에**
+  자유롭게 정한다. 기능 N개면 데코레이터 N개만 만들어 두고 필요한 대로 조립 → 폭발이 없다.
+- 그래서 데코레이터는 "상속으로 풀면 폭발하는 기능 조합"을 합성+위임으로 푸는 패턴이다(PART 8.4 합성 > 상속과 같은 사상).
+
+### 1-6. 감싸는 패턴 3형제 — 프록시 vs 데코레이터 vs 어댑터
+프록시·데코레이터·어댑터는 모두 "객체를 감싸는(wrapper)" 형제다. 갈림길은 **"감싼 뒤 인터페이스가 그대로냐,
+바뀌느냐"** 와 **"왜 감쌌느냐"** 다.
+
+| 패턴 | 인터페이스 | 의도 |
+|---|---|---|
+| 프록시(Proxy) | **그대로 유지** | 접근 제어(권한·캐싱·지연·원격) |
+| 데코레이터(Decorator) | **그대로 유지** | 기능 추가(꾸미기·변환·버퍼링) |
+| 어댑터(Adapter) | **변환(다른 타입으로)** | 호환 안 되는 인터페이스를 맞춰 연결 |
+
+- 프록시·데코레이터: 감싸도 **같은 인터페이스**(`TextSource`)라 클라이언트가 못 알아챈다(둘은 의도로만 구분, 1-4).
+- 어댑터: **다른 인터페이스를 변환**한다. 예: `fetch()`만 가진 옛 클래스(`LegacyMessage`)를 `read()`를 기대하는
+  코드에 끼우려면, fetch→read로 바꿔주는 어댑터가 필요하다(타입이 LegacyMessage → TextSource로 바뀜).
+- (참고) **퍼사드(Facade)**: 여러 객체를 묶어 '단순한 창구 하나'로 제공하는 패턴. 역시 감싸지만 목적이 '단순화'라
+  위 셋과 또 다르다(복잡한 하위 시스템을 쉬운 입구로).
+> ★ 한 줄 구분: "같은 인터페이스 + 접근 통제 = 프록시 / 같은 인터페이스 + 기능 추가 = 데코레이터 /
+> 인터페이스 변환 = 어댑터 / 여러 개를 단순 창구로 = 퍼사드".
+
+### 1-7. 자바 I/O = 데코레이터의 대표 사례 (PART 6과 연결)
 이 패턴은 학습용 장난감이 아니라 JDK 표준에 박혀 있다. 자바 I/O 스트림 래핑(PART 6)이 데코레이터다.
 ```
 InputStream(원본 바이트)
@@ -102,7 +129,8 @@ InputStream(원본 바이트)
 ### 코드 (`com.study.part12_aop.s05_proxy_vs_decorator`)
 - `TextSource`(인터페이스), `PlainTextSource`(원본).
 - `UpperCaseDecorator`/`BracketDecorator`(데코레이터, 기능 추가·쌓기), `AccessControlProxy`(프록시, 접근 제어).
-- `Example1_DecoratorPattern` / `Example2_ProxyPattern` / `Example3_JavaIoDecorator`.
+- `AccessControlProxy`(프록시) + `Example4_Adapter`의 `LegacyMessageAdapter`(어댑터).
+- `Example1_DecoratorPattern` / `Example2_ProxyPattern` / `Example3_JavaIoDecorator` / `Example4_Adapter`.
 
 ### 실행
 **프로젝트 루트(`C:\develop\study\spring-fundamentals`)에서 실행**한다.
@@ -110,6 +138,7 @@ InputStream(원본 바이트)
 ./gradlew runStage -Pmain=com.study.part12_aop.s05_proxy_vs_decorator.Example1_DecoratorPattern
 ./gradlew runStage -Pmain=com.study.part12_aop.s05_proxy_vs_decorator.Example2_ProxyPattern
 ./gradlew runStage -Pmain=com.study.part12_aop.s05_proxy_vs_decorator.Example3_JavaIoDecorator
+./gradlew runStage -Pmain=com.study.part12_aop.s05_proxy_vs_decorator.Example4_Adapter
 ```
 
 ### 실행 결과 — 가설과 실제 비교 (실측)
@@ -138,6 +167,13 @@ InputStream(원본 바이트)
 - `InputStream → InputStreamReader → BufferedReader`로 '쌓아' 감싸 바이트→문자→줄 단위 기능을 누적. ✅ →
   Example1과 똑같은 구조이며 의도가 '기능 추가'라 데코레이터. (PART 6 I/O가 곧 데코레이터)
 
+예제4 (어댑터):
+```
+adapted.read() = legacy-data   <- LegacyMessage.fetch()를 TextSource.read()로 변환해 호출
+```
+- `fetch()`만 가진 옛 클래스를 TextSource로 '변환'해 끼웠다. 타입이 LegacyMessage → TextSource로 바뀐다. ✅ →
+  프록시/데코레이터(인터페이스 유지)와 달리 어댑터는 '인터페이스 변환'이 의도.
+
 ---
 
 ## 3. 자기 점검
@@ -153,6 +189,15 @@ InputStream(원본 바이트)
 - **Q. 프록시의 대표 특징과 예는?**
   - 내 답: 대상으로의 접근 여부를 통제한다. 권한 없으면 차단, 캐시 있으면 생략, 처음 쓸 때만 생성(지연
     로딩). 결과를 꾸미지 않는 게 보통.
+
+- **Q. 데코레이터는 왜 상속 대신 쓰나?**
+  - 내 답: 상속으로 기능을 조합하면 조합마다 클래스가 생겨 폭발하고 컴파일 타임에 고정된다. 데코레이터는
+    런타임에 동적으로 겹쳐(`new Bracket(new Upper(plain))`) 조합해 폭발을 피한다(합성 > 상속).
+
+- **Q. 프록시·데코레이터·어댑터의 차이는?**
+  - 내 답: 셋 다 감싸는 패턴이지만 — 프록시/데코레이터는 '같은 인터페이스 유지'(프록시=접근 제어,
+    데코레이터=기능 추가), 어댑터는 '인터페이스 변환'(호환 안 되는 타입을 맞춰 연결). 한 줄: 접근제어=프록시 /
+    기능추가=데코레이터 / 변환=어댑터 / 여러 개를 단순 창구로=퍼사드.
 
 - **Q. LogProxy는 프록시인가 데코레이터인가?**
   - 내 답: 의도(로그 추가=기능 추가)로 보면 데코레이터에 가깝다. 다만 실무/스프링에선 둘을 엄격히 가르기보다
