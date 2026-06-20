@@ -90,16 +90,37 @@ ConcreteOrderService proxy = (ConcreteOrderService) enhancer.create();
 - **★ JPA 연결**: 이것이 PART 14에서 'JPA 엔티티에 final 클래스/메서드를 금지'하는 이유다. JPA(Hibernate)는
   지연 로딩 등을 위해 엔티티를 CGLIB로 상속한 프록시로 다루는데, final이면 프록시를 못 만든다.
 
+### 1-3b. ★ JDK 프록시의 함정과 Spring Boot가 CGLIB를 '기본'으로 한 진짜 이유
+JDK 동적 프록시가 만든 `$ProxyN`은 **인터페이스(OrderService)를 '구현'한 객체일 뿐, 진짜 클래스
+(RealOrderService)를 '상속'한 게 아니다.** 그래서 결정적 함정이 있다.
+```java
+OrderService p = (OrderService) Proxy.newProxyInstance(...);  // 인터페이스 타입 -> OK
+RealOrderService r = (RealOrderService) p;                    // 구체 클래스 캐스팅 -> ClassCastException!
+```
+- **인터페이스 타입으로는 받히지만, 구체 클래스 타입으로 캐스팅/주입하면 `ClassCastException`**이 난다. 실측:
+  JDK 프록시는 `RealOrderService`로 캐스팅 실패, CGLIB 프록시(구체 클래스 상속)는 성공.
+- 이것이 **12.8에서 `getBean(ScannedOrderService.class)`가 실패했던 바로 그 이유**다(JDK 프록시라 구체 타입으로 못 꺼냄).
+- ★ 그래서 Spring Boot 2.0+/3.x는 **CGLIB를 기본**으로 쓴다. "일관성" 말 뒤의 실질적 이유가 이것이다 — CGLIB는
+  구체 클래스를 상속하므로 **인터페이스가 있든 없든, 구체 타입으로 주입/캐스팅해도 안전**하다(`@Autowired
+  RealOrderService`처럼 구체 타입 주입이 흔한 현실에 맞춘 선택).
+
+> ★ CGLIB와 생성자 — Objenesis. CGLIB 프록시는 '상속'이라 프록시 객체를 만들 때 원래는 **부모(진짜 클래스)
+> 생성자가 호출**된다(생성자에 부작용이 있으면 두 번 실행되는 듯 보일 수 있음). Spring은 이를 피하려
+> **Objenesis**라는 도구로 '생성자를 호출하지 않고' 프록시 인스턴스를 만든다. 그래서 스프링 CGLIB 프록시는
+> 보통 생성자 부작용 없이 생성된다(엔티티/빈에 기본 생성자가 권장되는 맥락과도 연결).
+
 ### 1-4. JDK 동적 프록시 vs CGLIB / 그리고 다음(12.7)
 | | JDK 동적 프록시 | CGLIB |
 |---|---|---|
 | 전제 | 인터페이스 필요 | 구체 클래스로 OK |
 | 방식 | 인터페이스 구현 | 클래스 상속 |
 | 핸들러 | `InvocationHandler` | `MethodInterceptor` |
+| 결과 타입 | 인터페이스 타입만(구체 클래스 캐스팅 시 ClassCastException) | 구체 클래스 타입으로도 받힘(상속) |
 | 한계 | 인터페이스 없으면 불가 | final 클래스/메서드 불가 |
 | 프록시 클래스명 | `$Proxy0` 등 | `...$$EnhancerByCGLIB$$...` |
 
-- Spring Boot 3.x는 기본적으로 **CGLIB**를 쓴다(인터페이스 유무와 무관하게 일관성·기능 때문).
+- Spring Boot 3.x는 기본적으로 **CGLIB**를 쓴다. 인터페이스 유무와 무관하게 일관되고, 무엇보다 **구체 타입으로
+  주입/캐스팅해도 안전**하기 때문(1-3b).
 - **남는 문제(12.7의 동기)**: 둘은 API가 다르다(InvocationHandler vs MethodInterceptor). 대상에 따라 무엇을
   쓸지 매번 갈라 코딩하면 번거롭다. 이 둘을 하나로 통합하고, "어디에(Pointcut) 무엇을(Advice)" 적용할지까지
   묶은 것이 스프링의 `ProxyFactory` + `Advisor`다(12.7, 이 PART의 정점).
@@ -116,6 +137,7 @@ ConcreteOrderService proxy = (ConcreteOrderService) enhancer.create();
 - `OrderService`/`MemberService`(인터페이스), `RealOrderService`/`RealMemberService`(구현).
 - `ConcreteOrderService`(인터페이스 없는 구체 클래스, `pay()`는 final).
 - `Example1_Reflection` / `Example2_JdkDynamicProxy` / `Example3_Cglib`.
+- `Example4_JdkProxyCastingTrap` — JDK 프록시는 구체 타입 캐스팅 시 ClassCastException, CGLIB는 OK(대조).
 
 ### 실행
 **프로젝트 루트(`C:\develop\study\spring-fundamentals`)에서 실행**한다.
@@ -123,6 +145,7 @@ ConcreteOrderService proxy = (ConcreteOrderService) enhancer.create();
 ./gradlew runStage -Pmain=com.study.part12_aop.s06_dynamic_proxy.Example1_Reflection
 ./gradlew runStage -Pmain=com.study.part12_aop.s06_dynamic_proxy.Example2_JdkDynamicProxy
 ./gradlew runStage -Pmain=com.study.part12_aop.s06_dynamic_proxy.Example3_Cglib
+./gradlew runStage -Pmain=com.study.part12_aop.s06_dynamic_proxy.Example4_JdkProxyCastingTrap
 ```
 
 ### 실행 결과 — 가설과 실제 비교 (실측)
@@ -147,6 +170,14 @@ ConcreteOrderService proxy = (ConcreteOrderService) enhancer.create();
 - ①Reflection의 유연성과 컴파일 안전성 상실, ②JDK 동적 프록시의 `$ProxyN` 자동 생성(핸들러 1개), ③CGLIB의
   클래스 상속 프록시와 **final 한계**(pay에 로그 미적용)가 모두 확인됐다. ✅ → final 한계는 JPA 엔티티 final 금지로 연결.
 
+예제4 (JDK 캐스팅 함정):
+```
+(A) JDK: $Proxy0 -> RealOrderService로 캐스팅 -> ClassCastException!
+(B) CGLIB: ...RealOrderService$$EnhancerByCGLIB$$.. -> RealOrderService 타입으로 OK
+```
+- JDK 프록시는 인터페이스 타입이라 구체 클래스 캐스팅 실패, CGLIB는 구체 클래스 상속이라 성공. ✅ →
+  Spring Boot 3.x가 CGLIB를 기본으로 삼은 실질적 이유(구체 타입 주입/캐스팅 안전).
+
 ---
 
 ## 3. 자기 점검
@@ -162,6 +193,15 @@ ConcreteOrderService proxy = (ConcreteOrderService) enhancer.create();
 - **Q. JDK 동적 프록시와 CGLIB의 차이는?**
   - 내 답: JDK는 인터페이스 필요(인터페이스 구현, InvocationHandler), CGLIB는 인터페이스 없이 OK(클래스 상속,
     MethodInterceptor). JDK는 인터페이스 없으면 불가, CGLIB는 final 클래스/메서드 불가. Spring Boot 3.x 기본은 CGLIB.
+
+- **Q. Spring Boot가 CGLIB를 기본으로 삼은 실질적 이유는?**
+  - 내 답: JDK 동적 프록시는 인터페이스 타입($ProxyN)이라 구체 클래스 타입으로 캐스팅/주입하면
+    ClassCastException이 난다. CGLIB는 구체 클래스를 상속해 구체 타입으로도 안전하게 받힌다. 구체 타입 주입이
+    흔한 현실에 맞춰 CGLIB를 기본으로 한다(12.8 getBean(구체클래스) 실패도 같은 맥락).
+
+- **Q. CGLIB 프록시 생성 시 생성자는? (Objenesis)**
+  - 내 답: CGLIB는 상속이라 원래는 부모(진짜 클래스) 생성자가 호출된다. Spring은 Objenesis로 생성자 호출 없이
+    프록시 인스턴스를 만들어 생성자 부작용을 피한다.
 
 - **Q. CGLIB가 final을 못 다루는 게 왜 JPA와 연결되나?**
   - 내 답: CGLIB는 상속+오버라이드로 프록시를 만드는데 final은 오버라이드가 안 된다. JPA(Hibernate)는 엔티티를
