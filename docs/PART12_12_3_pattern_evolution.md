@@ -107,6 +107,17 @@ t.execute("order", () -> { System.out.println("주문 처리"); return null; });
 int n = t.execute("validate", () -> { System.out.println("검증 통과"); return 1; });
 ```
 - **용어 매핑(스프링)**: Context → Template, Strategy → Callback. '콜백' = 인수로 넘겨 두었다 나중에 호출되는 실행 코드.
+
+> ★ Callback의 역할과 제네릭 `<T>`가 헷갈릴 때
+> - **Callback = "변하는 부분(비즈니스)을 담아 템플릿에 넘기는 상자"**. 템플릿은 begin → (여기서
+>   `callback.call()`) → end 흐름을 고정하고, '여기' 자리에 끼울 코드를 Callback으로 받는다. 호출자가 람다
+>   `() -> {...}`를 넘기면 그게 곧 Callback 구현이고, 템플릿이 흐름 도중에 그 람다를 '되불러(call back)' 실행한다.
+> - **`<T>` = "콜백이 돌려줄 값의 타입"을 가리키는 빈칸**(제네릭 타입 파라미터). 클래스에 고정된 게 아니라,
+>   `execute`를 '호출할 때마다' 그때 넘긴 람다의 `return` 값을 보고 컴파일러가 채운다(타입 추론).
+>   - `() -> { ...; return null; }` → 반환 안 씀 → T는 사실상 Object.
+>   - `int n = execute(..., () -> { ...; return 1; })` → 람다가 Integer 반환 → **T=Integer로 추론** → execute도 Integer 반환 → int로 받음.
+> - 그래서 같은 템플릿 하나로 '반환값 없는 작업'도 'Integer/String 반환 작업'(JdbcTemplate.query가 결과를
+>   돌려주듯)도 다 처리한다. `<T>`가 없으면 매번 캐스팅해야 했을 것이다.
 - **왜 중요한가 — 스프링의 `XxxTemplate` 시리즈가 전부 이 패턴**이다:
   - `JdbcTemplate`(10.5): `jdbcTemplate.query("sql", rowMapper)` — 연결/예외/자원 정리(변하지 않는 흐름)는
     템플릿이, '행 → 객체 변환'(변하는 부분)은 `RowMapper` 콜백이 담당.

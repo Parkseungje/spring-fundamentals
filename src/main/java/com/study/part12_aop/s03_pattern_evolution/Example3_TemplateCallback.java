@@ -19,7 +19,14 @@ package com.study.part12_aop.s03_pattern_evolution;
  */
 public class Example3_TemplateCallback {
 
-    // 콜백 인터페이스: 결과를 반환하도록 제네릭으로(JdbcTemplate처럼 값 반환을 모사).
+    // 콜백 인터페이스 = "변하는 부분(비즈니스 로직)을 담아 템플릿에 넘기는 상자".
+    //   템플릿은 begin -> (여기서 callback.call() 실행) -> end 흐름을 고정하고, 그 '여기' 자리에 끼울 코드를
+    //   이 Callback으로 받는다. 호출자가 람다 () -> {...} 를 넘기면 그게 곧 이 Callback의 구현이고,
+    //   템플릿이 흐름 도중에 그 람다를 '되불러(call back)' 실행한다(= 콜백).
+    //
+    //   <T> = "call()이 돌려줄 값의 타입"을 가리키는 빈칸(제네릭 타입 파라미터). 클래스에 고정된 게 아니라,
+    //   execute를 '호출할 때마다' 그때 넘긴 람다의 return 값을 보고 컴파일러가 채운다(타입 추론). 그래서 같은
+    //   템플릿 하나로 반환값 없는 작업(T=Object)·Integer 반환 작업(T=Integer)·String 반환 작업을 다 처리한다.
     interface Callback<T> {
         T call() throws Exception;
     }
@@ -28,6 +35,8 @@ public class Example3_TemplateCallback {
     static class TraceTemplate {
         private final Trace trace = new Trace();
 
+        // 맨 앞 <T> = "이 메서드는 T라는 타입 변수를 쓴다"는 선언. 인자 Callback<T>와 반환 T가 같은 T다.
+        // T가 무엇이 될지는 '호출 시점에' 넘긴 콜백(람다)의 반환값으로 정해진다(아래 main 참고).
         public <T> T execute(String message, Callback<T> callback) {  // 콜백을 '실행 시점에' 받는다
             Trace.Status status = trace.begin(message);
             try {
@@ -47,14 +56,16 @@ public class Example3_TemplateCallback {
         TraceTemplate template = new TraceTemplate();  // 템플릿은 '하나'만(예제2는 작업마다 Context를 새로 만듦)
 
         // 작업마다 콜백(람다)만 바꿔 같은 템플릿에 넘긴다. 객체 추가 생성 없음.
+        // 이 람다는 return null -> 반환을 안 쓰므로 T는 의미 없음(컴파일러가 Object로 추론).
         template.execute("OrderService.order", () -> {
             System.out.println("    [비즈니스] 노트북 주문 처리");
             return null;
         });
-        // 콜백이 값을 반환할 수도 있다(JdbcTemplate.query가 결과를 돌려주듯).
+        // 이 람다는 return 1(Integer) -> 컴파일러가 T=Integer로 추론 -> execute 반환 타입도 Integer ->
+        // int count로 받을 수 있다(언박싱). 즉 <T>는 '이 호출'에서 람다 반환값을 보고 Integer로 정해진다.
         int count = template.execute("OrderService.validate", () -> {
             System.out.println("    [비즈니스] 노트북 검증 통과");
-            return 1; // 검증 통과 건수 등
+            return 1; // 검증 통과 건수 등 (JdbcTemplate.query가 결과를 돌려주듯)
         });
         System.out.println("    검증 결과 건수 = " + count);
 
